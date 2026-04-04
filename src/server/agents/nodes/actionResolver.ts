@@ -1,5 +1,5 @@
 import type { GameGraphState } from '../state.js'
-import type { CharacterId, ConversationMessage, GameState } from '../../../shared/types.js'
+import type { CharacterId, GameState, EventStreamItem } from '../../../shared/types.js'
 import {
   calcDispatchSuccessRate,
   calcSelfSuccessRate,
@@ -11,55 +11,58 @@ import {
   calcRelationshipDeltas,
   applyScoreDelta,
   checkGameOver,
-  shouldTriggerChainEvent,
 } from '../../game/scoring.js'
 import { generateCharacterResponse, generateFailureResponse } from '../characters/index.js'
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai'
 import { randomUUID } from 'crypto'
-import { minutesToTime } from '../../game/initialState.js'
 
 export function createActionResolverNode(model: ChatGoogleGenerativeAI) {
   return async function actionResolverNode(
     state: GameGraphState
   ): Promise<Partial<GameGraphState>> {
-    const { playerAction, pendingEvent, scores, relationships, mrpState, conversations } = state
+    const { playerAction, pendingEvents, scores, relationships, mrpState } = state
 
-    if (!playerAction || !pendingEvent) {
-      return {}
-    }
+    if (!playerAction) return {}
 
-    const choice = pendingEvent.choices.find((c) => c.id === playerAction.choiceId)
+    const event = pendingEvents.find(e => e.id === playerAction.eventId)
+    if (!event) return {}
+
+    const choice = event.choices.find(c => c.id === playerAction.choiceId)
     if (!choice) return {}
 
     let success = false
     let failureLevel: ReturnType<typeof getFailureLevel> | undefined
     let characterResponse = ''
-    const newConversations: ConversationMessage[] = []
+    const newStreamItems: EventStreamItem[] = []
 
-    // ── アクションタイプ別処理 ──
+    // 時間コスト計算
+    let timeConsumed = choice.timeCost
+    let newDayTimeRemaining = state.dayTimeRemaining
+    if (timeConsumed === 'half_day') newDayTimeRemaining = Math.max(0, newDayTimeRemaining - 1)
+    else if (timeConsumed === 'full_day') newDayTimeRemaining = 0
+
+    // --- アクション処理 ---
     if (choice.actionType === 'defer') {
-      // 保留: 常に「一時的成功」だが後でリスクが爆発
       success = true
       const newRisk = state.riskPoints + 15
       characterResponse = `【保留】「${choice.context ?? '様子を見る'}」——リスクポイントが蓄積されました。`
 
-      const scoreDeltas = calcScoreDeltas(pendingEvent.id, choice.id, false, 'minor')
-      const relDeltas = calcRelationshipDeltas(pendingEvent.id, choice.id, false, 'minor')
+      const scoreDeltas = calcScoreDeltas(event.id, choice.id, false, 'minor')
+      const relDeltas = calcRelationshipDeltas(event.id, choice.id, false, 'minor')
       const newScores = applyScoreDelta(scores, scoreDeltas)
-      const newRelationships = applyRelationshipDelta(relationships, relDeltas)
-      const gameOverCheck = checkGameOver({
-        scores: newScores,
-        relationships: newRelationships,
-      } as GameState)
+      const newRelationships = applyRelDelta(relationships, relDeltas)
+      const gameOverCheck = checkGameOver({ scores: newScores, relationships: newRelationships } as GameState)
 
-      newConversations.push({
+      newStreamItems.push({
         id: randomUUID(),
+        timestamp: { week: state.currentWeek, day: state.currentDay },
         characterId: 'system',
+        title: '保留',
         content: characterResponse,
-        isPlayer: false,
-        timestamp: state.gameTime,
-        realTimestamp: new Date().toISOString(),
-        eventId: pendingEvent.id,
+        severity: 'medium',
+        category: event.category,
+        isRead: true,
+        eventId: event.id,
       })
 
       return {
@@ -67,55 +70,45 @@ export function createActionResolverNode(model: ChatGoogleGenerativeAI) {
         scores: newScores,
         relationships: newRelationships,
         riskPoints: newRisk,
-        resolvedEventIds: [pendingEvent.id],
-        deferredEventIds: [pendingEvent.id],
-        pendingEvent: null,
-        isWaiting: false,
-        conversations: newConversations,
+        resolvedEventIds: [...state.resolvedEventIds, event.id],
+        pendingEvents: pendingEvents.filter(e => e.id !== event.id),
+        eventStream: [...state.eventStream, ...newStreamItems],
+        dayTimeRemaining: newDayTimeRemaining,
+        isWaiting: pendingEvents.length > 1,
+        playerAction: null,
         isGameOver: gameOverCheck.isOver,
         gameOverReason: gameOverCheck.reason,
         lastActionOutcome: {
           success: false,
           message: '保留しました。後でより大きな問題になる可能性があります。',
           scoreDeltas,
-          timeConsumed: choice.timeConsumption,
+          timeConsumed: choice.timeCost,
         },
       }
     }
 
-    if (choice.actionType === 'self') {
-      // プレイヤー直接対応
+    if (choice.actionType === 'self' || choice.actionType === 'investigate') {
       const successRate = calcSelfSuccessRate()
       const roll = Math.random()
       success = roll <= successRate
 
-      const situation = pendingEvent.description
-      const actionDesc = choice.label
-
       characterResponse = await generateCharacterResponse(
-        pendingEvent.characterId,
-        situation,
-        actionDesc,
-        {
-          ...state,
-          phase: 'playing',
-          sessionId: state.sessionId,
-          lastCharacterResponse: null,
-          isGameOver: state.isGameOver,
-        } as GameState,
+        event.characterId,
+        event.description,
+        choice.label,
+        buildMiniState(state),
         model
       )
     } else if (choice.actionType === 'dispatch' && choice.dispatchTarget) {
-      // 部下派遣
       const dispatcher = choice.dispatchTarget
-      const target = pendingEvent.characterId
+      const target = event.characterId
       const currentRel = relationships[dispatcher] ?? 50
 
       const successRate = calcDispatchSuccessRate({
         dispatcher,
         target,
         currentRelationship: currentRel,
-        instructionQuality: 0.7, // MVP: 指示品質は固定
+        instructionQuality: 0.7,
       })
       const roll = Math.random()
       success = roll <= successRate
@@ -123,15 +116,9 @@ export function createActionResolverNode(model: ChatGoogleGenerativeAI) {
       if (success) {
         characterResponse = await generateCharacterResponse(
           dispatcher,
-          pendingEvent.description,
+          event.description,
           choice.label,
-          {
-            ...state,
-            phase: 'playing',
-            sessionId: state.sessionId,
-            lastCharacterResponse: null,
-            isGameOver: state.isGameOver,
-          } as GameState,
+          buildMiniState(state),
           model
         )
       } else {
@@ -146,44 +133,43 @@ export function createActionResolverNode(model: ChatGoogleGenerativeAI) {
     }
 
     // スコア・関係値更新
-    const scoreDeltas = calcScoreDeltas(pendingEvent.id, choice.id, success, failureLevel)
-    const relDeltas = calcRelationshipDeltas(pendingEvent.id, choice.id, success, failureLevel)
+    const scoreDeltas = calcScoreDeltas(event.id, choice.id, success, failureLevel)
+    const relDeltas = calcRelationshipDeltas(event.id, choice.id, success, failureLevel)
     const newScores = applyScoreDelta(scores, scoreDeltas)
-    const newRelationships = applyRelationshipDelta(relationships, relDeltas)
+    const newRelationships = applyRelDelta(relationships, relDeltas)
 
-    // 会話ログに追加
-    newConversations.push({
+    // イベントストリームに結果追加
+    newStreamItems.push({
       id: randomUUID(),
-      characterId: pendingEvent.characterId,
+      timestamp: { week: state.currentWeek, day: state.currentDay },
+      characterId: event.characterId,
+      title: success ? `対応完了: ${event.title}` : `対応失敗: ${event.title}`,
       content: characterResponse,
-      isPlayer: false,
-      timestamp: state.gameTime,
-      realTimestamp: new Date().toISOString(),
-      eventId: pendingEvent.id,
+      severity: success ? 'low' : 'high',
+      category: event.category,
+      isRead: true,
+      eventId: event.id,
     })
 
-    // ゲームオーバーチェック
-    const gameOverCheck = checkGameOver({
-      scores: newScores,
-      relationships: newRelationships,
-    } as GameState)
+    const gameOverCheck = checkGameOver({ scores: newScores, relationships: newRelationships } as GameState)
 
-    // 連鎖イベント確認
-    const triggeredChain = shouldTriggerChainEvent(state.riskPoints)
+    // MRP更新
+    const newMrpState = updateMrpProgress(mrpState, success)
 
-    // MRP実績更新（簡易: 成功したアクションが進行に繋がる）
-    const newMrpState = updateMrpState(mrpState, pendingEvent.id, success)
+    // 残りのpendingEvents
+    const remainingEvents = pendingEvents.filter(e => e.id !== event.id)
 
     return {
       characterResponse,
       scores: newScores,
       relationships: newRelationships,
       mrpState: newMrpState,
-      resolvedEventIds: [pendingEvent.id],
-      pendingEvent: null,
-      isWaiting: false,
+      resolvedEventIds: [...state.resolvedEventIds, event.id],
+      pendingEvents: remainingEvents,
+      eventStream: [...state.eventStream, ...newStreamItems],
+      dayTimeRemaining: newDayTimeRemaining,
+      isWaiting: remainingEvents.length > 0,
       playerAction: null,
-      conversations: newConversations,
       isGameOver: gameOverCheck.isOver,
       gameOverReason: gameOverCheck.reason,
       lastActionOutcome: {
@@ -192,17 +178,16 @@ export function createActionResolverNode(model: ChatGoogleGenerativeAI) {
           ? `対応成功。${choice.label}を実行しました。`
           : `対応失敗（${failureLevel ? FAILURE_DESCRIPTIONS[failureLevel] : '不明'}）`,
         scoreDeltas,
-        timeConsumed: choice.timeConsumption,
+        timeConsumed: choice.timeCost,
       },
     }
   }
 }
 
-// 関係値をクランプして更新
-function applyRelationshipDelta(
-  current: GameState['relationships'],
+function applyRelDelta(
+  current: Record<CharacterId, number>,
   delta: Partial<Record<CharacterId, number>>
-): GameState['relationships'] {
+): Record<CharacterId, number> {
   const result = { ...current }
   for (const [key, val] of Object.entries(delta)) {
     const k = key as CharacterId
@@ -211,30 +196,36 @@ function applyRelationshipDelta(
   return result
 }
 
-// MRP実績を簡易更新
-function updateMrpState(
-  mrpState: GameState['mrpState'],
-  eventId: string,
-  success: boolean
-): GameState['mrpState'] {
+function updateMrpProgress(mrpState: GameGraphState['mrpState'], success: boolean) {
   if (!success) return mrpState
-
-  // 成功したアクションに応じて完了台数を増やす（簡易ロジック）
-  const completionBonus: Record<string, number> = {
-    self_fix: 1,
-    reschedule: 1,
-    accept_change: 0,
-    emergency_response: 2,
-    prioritize_orders: 1,
-    finalize_shipping: 2,
-    all_hands: 3,
-  }
-
+  const bonus = Math.floor(Math.random() * 2) + 1
   return {
     ...mrpState,
-    totalCompleted: Math.min(
-      mrpState.totalPlanned,
-      mrpState.totalCompleted + (completionBonus[eventId] ?? 0)
-    ),
+    weeklyCompleted: Math.min(mrpState.weeklyPlanned, mrpState.weeklyCompleted + bonus),
+  }
+}
+
+function buildMiniState(state: GameGraphState): GameState {
+  return {
+    sessionId: state.sessionId,
+    phase: state.phase as GameState['phase'],
+    currentWeek: state.currentWeek,
+    currentDay: state.currentDay,
+    dayTimeRemaining: state.dayTimeRemaining,
+    scores: state.scores,
+    weeklyScores: state.weeklyScores,
+    departments: state.departments,
+    productionLines: state.productionLines,
+    suppliers: state.suppliers,
+    workCapacity: state.workCapacity,
+    activeDirective: state.activeDirective,
+    eventStream: state.eventStream,
+    pendingEvents: state.pendingEvents,
+    pendingNegotiation: state.pendingNegotiation,
+    relationships: state.relationships,
+    mrpState: state.mrpState,
+    riskPoints: state.riskPoints,
+    isGameOver: state.isGameOver,
+    gameOverReason: state.gameOverReason,
   }
 }

@@ -1,62 +1,154 @@
 import type { GameGraphState } from '../state.js'
-import { getTimeSlot } from '../../game/initialState.js'
-import type { GameEvent } from '../../../shared/types.js'
-import { EVENT_CATALOG } from '../../game/events.js'
+import { scheduleWeeklyEvents, getEventsForDay } from '../../game/events.js'
+import { generateDirective } from '../../game/director.js'
+import { evaluateWeekly } from '../../game/scoring.js'
+import { dailyCapacityUpdate } from '../../game/capacity.js'
+import { randomUUID } from 'crypto'
+import type { EventStreamItem, GameState } from '../../../shared/types.js'
 
-// 次のイベントまでゲーム時間を進める
+// 日 → 次の日 or 週末 → 次の週 or 月末 に進める
 export async function timeAdvanceNode(
   state: GameGraphState
 ): Promise<Partial<GameGraphState>> {
-  const { gameTime, events, resolvedEventIds, deferredEventIds, lastActionOutcome } = state
+  const { currentDay, currentWeek, pendingEvents } = state
 
-  const handledIds = new Set([...resolvedEventIds, ...deferredEventIds])
-
-  // アクションで消費した時間を加算
-  const timeConsumed = lastActionOutcome?.timeConsumed ?? 15
-  const afterAction = Math.min(gameTime + timeConsumed, 17 * 60 + 30)
-
-  // 次の未処理イベントの時刻を探す
-  const upcomingEvent = events
-    .filter((e) => e.triggerTime > gameTime && !handledIds.has(e.id))
-    .sort((a, b) => a.triggerTime - b.triggerTime)[0]
-
-  // 次のイベントがアクション後より未来なら、そのイベント時刻まで一気に進める
-  const nextTime = (upcomingEvent && upcomingEvent.triggerTime > afterAction)
-    ? upcomingEvent.triggerTime
-    : Math.min(afterAction, 17 * 60 + 30)
-
-  // 連鎖イベント発動チェック（保留ポイントが高い場合）
-  const chainEvents = checkChainEvents(state)
-
-  const newEvents = chainEvents.length > 0
-    ? [...events, ...chainEvents]
-    : events
-
-  return {
-    gameTime: nextTime,
-    timeSlot: getTimeSlot(nextTime),
-    events: newEvents,
-    isGameOver: nextTime >= 17 * 60 + 30,
+  // まだpendingEventsが残っている場合は進めない
+  if (pendingEvents.length > 0) {
+    return { isWaiting: true }
   }
-}
 
-// 保留ポイントによる連鎖イベント発動
-function checkChainEvents(state: GameGraphState): GameEvent[] {
-  const { riskPoints, deferredEventIds, events } = state
-  if (riskPoints < 30) return []
+  // --- 日終了処理 ---
+  const { lines: updatedLines, capacity: updatedCapacity } =
+    dailyCapacityUpdate(state.productionLines, state.workCapacity)
 
-  // E4（連鎖危機）がまだ発生していない場合のみ追加
-  const e4Exists = events.some((e) => e.id === 'E4_chain_crisis')
-  const e4Handled = deferredEventIds.includes('E4_chain_crisis') ||
-    state.resolvedEventIds.includes('E4_chain_crisis')
+  // MRP進捗: 日毎に生産進捗を少し進める
+  const dailyProgress = Math.floor(Math.random() * 2) + 1
+  const newMrp = {
+    ...state.mrpState,
+    weeklyCompleted: Math.min(
+      state.mrpState.weeklyPlanned,
+      state.mrpState.weeklyCompleted + dailyProgress
+    ),
+  }
 
-  if (!e4Exists && !e4Handled) {
-    const e4 = EVENT_CATALOG.find((e) => e.id === 'E4_chain_crisis')
-    if (e4) {
-      // 現在時刻 + 5分後にトリガー
-      return [{ ...e4, triggerTime: state.gameTime + 5 }]
+  if (currentDay < 5) {
+    // --- 次の日へ ---
+    const nextDay = currentDay + 1
+    const nextDayEvents = getEventsForDay(state.allWeekEvents, nextDay)
+      .filter(e => !state.resolvedEventIds.includes(e.id))
+
+    const newStreamItems: EventStreamItem[] = [{
+      id: randomUUID(),
+      timestamp: { week: currentWeek, day: nextDay },
+      characterId: 'system',
+      title: `${currentWeek}週目 ${getDayName(nextDay)}`,
+      content: `${getDayName(nextDay)}が始まりました。今日も工場を回していきましょう。`,
+      severity: 'low',
+      category: 'manufacturing',
+      isRead: true,
+    }]
+
+    // 次の日のイベント通知をストリームに追加
+    for (const e of nextDayEvents) {
+      newStreamItems.push({
+        id: randomUUID(),
+        timestamp: { week: currentWeek, day: nextDay },
+        characterId: e.characterId,
+        title: e.title,
+        content: e.description,
+        severity: e.severity,
+        category: e.category,
+        isRead: false,
+        eventId: e.id,
+        isDirective: e.category === 'director',
+      })
+    }
+
+    return {
+      currentDay: nextDay,
+      dayTimeRemaining: 2,
+      pendingEvents: nextDayEvents,
+      eventStream: [...state.eventStream, ...newStreamItems],
+      productionLines: updatedLines,
+      workCapacity: updatedCapacity,
+      mrpState: newMrp,
+      isWaiting: nextDayEvents.length > 0,
     }
   }
 
-  return []
+  // --- 週末処理（金曜日終了） ---
+  const weeklyReport = evaluateWeekly({
+    ...state,
+    productionLines: updatedLines,
+    workCapacity: updatedCapacity,
+    mrpState: newMrp,
+  } as unknown as GameState)
+
+  const newWeeklyScores = [...state.weeklyScores, weeklyReport]
+
+  if (currentWeek >= 4) {
+    // --- 月末 → ゲーム終了 ---
+    return {
+      phase: 'monthResult',
+      weeklyScores: newWeeklyScores,
+      productionLines: updatedLines,
+      workCapacity: updatedCapacity,
+      mrpState: newMrp,
+      isGameOver: true,
+    }
+  }
+
+  // --- 次の週へ ---
+  const nextWeek = currentWeek + 1
+  const newDirective = generateDirective(nextWeek, state.scores)
+  const newWeekEvents = scheduleWeeklyEvents(nextWeek)
+  const day1Events = getEventsForDay(newWeekEvents, 1)
+    .filter(e => e.category !== 'director')
+
+  const weekStartStream: EventStreamItem[] = [
+    {
+      id: randomUUID(),
+      timestamp: { week: nextWeek, day: 1 },
+      characterId: 'system',
+      title: `第${nextWeek}週開始`,
+      content: `第${nextWeek}週が始まりました。`,
+      severity: 'low',
+      category: 'manufacturing',
+      isRead: true,
+    },
+    {
+      id: randomUUID(),
+      timestamp: { week: nextWeek, day: 1 },
+      characterId: 'factory_director',
+      title: newDirective.title,
+      content: newDirective.description,
+      severity: 'critical',
+      category: 'director',
+      isRead: false,
+      isDirective: true,
+    },
+  ]
+
+  return {
+    phase: 'weekResult',
+    currentWeek: nextWeek,
+    currentDay: 1,
+    dayTimeRemaining: 2,
+    weeklyScores: newWeeklyScores,
+    activeDirective: newDirective,
+    allWeekEvents: newWeekEvents,
+    pendingEvents: day1Events,
+    resolvedEventIds: [],
+    eventStream: [...state.eventStream, ...weekStartStream],
+    productionLines: updatedLines,
+    workCapacity: updatedCapacity,
+    mrpState: newMrp,
+    riskPoints: Math.max(0, state.riskPoints - 10), // 週またぎでリスク少し減少
+    isWaiting: false,
+  }
+}
+
+function getDayName(day: number): string {
+  const names = ['月曜日', '火曜日', '水曜日', '木曜日', '金曜日']
+  return names[day - 1] ?? `${day}日目`
 }

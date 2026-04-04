@@ -1,14 +1,14 @@
 import type { Character, CharacterId } from '../../shared/types.js'
 
 export const CHARACTERS: Record<CharacterId, Character> = {
-  factory_manager: {
-    id: 'factory_manager',
+  factory_director: {
+    id: 'factory_director',
     displayName: '工場長 村上 克己',
     role: '工場長',
     firstName: '村上 克己',
     age: 55,
     catchphrase: '言い訳はいい、どうするんだ',
-    personality: '現場叩き上げ35年の職人気質。納期遅延には激怒。品質を犠牲にした対応には反対。滅多に登場しないが来たときは重大局面。',
+    personality: '現場叩き上げ35年の職人気質。納期遅延には激怒。品質を犠牲にした対応には反対。神的存在として毎週大方針を出す。',
     avatarColor: '#dc2626',
     relationshipDefault: 50,
   },
@@ -52,20 +52,9 @@ export const CHARACTERS: Record<CharacterId, Character> = {
     firstName: '木村 隆',
     age: 41,
     catchphrase: '今から発注して、納期は保証できませんよ',
-    personality: '調達・外注管理を一手に担うベテラン。仕入先との関係と価格交渉が得意。急な発注変更を嫌う。リードタイムの現実を一番知っている。',
+    personality: '調達・外注管理を一手に担うベテラン。仕入先との関係と価格交渉が得意。急な発注変更を嫌う。リードタイムの現実を一番知っている。サプライヤー候補を提案してくれる。',
     avatarColor: '#15803d',
     relationshipDefault: 65,
-  },
-  subcontractor: {
-    id: 'subcontractor',
-    displayName: '外注先社長 坂本 義雄',
-    role: '外注先社長',
-    firstName: '坂本 義雄',
-    age: 57,
-    catchphrase: 'うちのことも考えてくださいよ',
-    personality: '町工場の二代目。技術力は高いがキャパに限界。急ぎ対応を頼むと渋りながらも最終的にはなんとかしてくれる。無理をさせすぎると断られる。',
-    avatarColor: '#0369a1',
-    relationshipDefault: 70,
   },
   subordinate1: {
     id: 'subordinate1',

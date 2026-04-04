@@ -3,6 +3,12 @@ import type {
   GameStartResponse,
   GameActionResponse,
   GameState,
+  InvestigateResponse,
+  NegotiateResponse,
+  NegotiationTone,
+  SupplierId,
+  WeeklyReport,
+  MonthlyReport,
 } from '../../shared/types'
 
 const BASE = '/api'
@@ -38,9 +44,33 @@ export const api = {
       body: JSON.stringify(params),
     }),
 
-  getResult: (sessionId: string) =>
-    request<{
-      gameState: GameState
-      evaluation: { grade: string; message: string; totalScore: number }
-    }>(`/game/result/${sessionId}`),
+  advanceDay: (sessionId: string) =>
+    request<{ gameState: GameState }>('/game/advance-day', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId }),
+    }),
+
+  continueWeek: (sessionId: string) =>
+    request<{ gameState: GameState }>('/game/continue-week', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId }),
+    }),
+
+  investigate: (params: { sessionId: string; eventId: string; choiceId: string }) =>
+    request<InvestigateResponse>('/game/investigate', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
+  negotiate: (params: { sessionId: string; supplierId: SupplierId; tone: NegotiationTone }) =>
+    request<NegotiateResponse>('/game/negotiate', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
+  getWeekResult: (sessionId: string) =>
+    request<{ report: WeeklyReport; gameState: GameState }>(`/game/week-result/${sessionId}`),
+
+  getMonthResult: (sessionId: string) =>
+    request<{ report: MonthlyReport; gameState: GameState }>(`/game/month-result/${sessionId}`),
 }

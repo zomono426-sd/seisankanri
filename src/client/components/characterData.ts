@@ -1,9 +1,9 @@
 import type { Character, CharacterId } from '../../shared/types'
 
-// フロントエンド用のキャラクターデータ（サーバーのデータを複製）
+// フロントエンド用のキャラクターデータ
 export const CHARACTERS: Record<CharacterId, Character> = {
-  factory_manager: {
-    id: 'factory_manager',
+  factory_director: {
+    id: 'factory_director',
     displayName: '工場長 村上 克己',
     role: '工場長',
     firstName: '村上 克己',
@@ -56,17 +56,6 @@ export const CHARACTERS: Record<CharacterId, Character> = {
     personality: 'リードタイムの現実を一番知っている',
     avatarColor: '#15803d',
     relationshipDefault: 65,
-  },
-  subcontractor: {
-    id: 'subcontractor',
-    displayName: '外注先社長 坂本 義雄',
-    role: '外注先社長',
-    firstName: '坂本 義雄',
-    age: 57,
-    catchphrase: 'うちのことも考えてくださいよ',
-    personality: '町工場の二代目。技術力は高いがキャパに限界',
-    avatarColor: '#0369a1',
-    relationshipDefault: 70,
   },
   subordinate1: {
     id: 'subordinate1',

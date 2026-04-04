@@ -1,36 +1,46 @@
 import type { GameGraphState } from '../state.js'
-import { getTimeSlot } from '../../game/initialState.js'
+import { getEventsForDay } from '../../game/events.js'
+import { randomUUID } from 'crypto'
+import type { EventStreamItem } from '../../../shared/types.js'
 
-// 現在のゲーム時刻でトリガーすべきイベントを判定し pendingEvent にセットする
+// 当日のイベントをスケジュールし、pendingEventsにセットする
 export async function eventSchedulerNode(
   state: GameGraphState
 ): Promise<Partial<GameGraphState>> {
-  const { gameTime, events, resolvedEventIds, deferredEventIds, pendingEvent } = state
+  const { currentDay, currentWeek, allWeekEvents, resolvedEventIds, pendingEvents } = state
 
-  // すでに対応待ちのイベントがある場合はそのまま
-  if (pendingEvent) {
-    return {}
+  // すでに当日のイベントがpendingに入っている場合はスキップ
+  if (pendingEvents.length > 0) {
+    return { isWaiting: true }
   }
 
-  // 解決済み・保留中のIDセット
-  const handledIds = new Set([...resolvedEventIds, ...deferredEventIds])
+  // 当日のイベントを取得
+  const resolvedSet = new Set(resolvedEventIds)
+  const todayEvents = getEventsForDay(allWeekEvents, currentDay)
+    .filter(e => !resolvedSet.has(e.id))
 
-  // 現在時刻以前にトリガーされるべきイベントを時刻順で検索
-  const nextEvent = events
-    .filter((e) => e.triggerTime <= gameTime && !handledIds.has(e.id))
-    .sort((a, b) => a.triggerTime - b.triggerTime)[0]
-
-  if (!nextEvent) {
-    // ゲーム終了時刻を超えた場合
-    if (gameTime >= 17 * 60 + 30) {
-      return { isGameOver: true }
-    }
-    return {}
+  if (todayEvents.length === 0) {
+    // イベントがない場合 → 日終了へ
+    return { pendingEvents: [], isWaiting: false }
   }
+
+  // イベントストリームに通知追加
+  const newStreamItems: EventStreamItem[] = todayEvents.map(e => ({
+    id: randomUUID(),
+    timestamp: { week: currentWeek, day: currentDay },
+    characterId: e.characterId,
+    title: e.title,
+    content: e.description,
+    severity: e.severity,
+    category: e.category,
+    isRead: false,
+    eventId: e.id,
+    isDirective: e.category === 'director',
+  }))
 
   return {
-    pendingEvent: nextEvent,
-    timeSlot: getTimeSlot(gameTime),
+    pendingEvents: todayEvents,
+    eventStream: [...state.eventStream, ...newStreamItems],
     isWaiting: true,
   }
 }

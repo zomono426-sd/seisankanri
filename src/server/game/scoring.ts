@@ -1,126 +1,153 @@
 import type {
-  ActionOutcome,
-  CharacterId,
   GameState,
-  PlayerAction,
   Scores,
+  WeeklyReport,
+  MonthlyReport,
+  CharacterId,
+  FactoryDirective,
 } from '../../shared/types.js'
 import type { FailureLevel } from './probability.js'
+import { evaluateDirective } from './director.js'
 
-// スコア変動テーブル: イベントID × アクションID → スコア変動
-const SCORE_DELTAS: Record<
-  string,
-  Record<string, Partial<Scores>>
-> = {
-  // E1: 設備アラーム
-  E1_equipment_alarm: {
-    self_fix: { costControl: -5, deliveryRate: +3 },
-    dispatch_tanaka: { deliveryRate: +2 },
-    dispatch_sasaki: { deliveryRate: +1 },
-    defer: { deliveryRate: -10, riskPoints: 15 } as Partial<Scores> & { riskPoints?: number },
+// ============================================================
+// スコアリング — 週次評価 + 月次総合評価
+// ============================================================
+
+// --- スコア変動テーブル（イベントID × 選択ID） ---
+const SCORE_DELTAS: Record<string, Record<string, Partial<Scores>>> = {
+  // 営業系
+  S1_rush_order: {
+    accept_rush: { costControl: -8, deliveryRate: -3, customerSatisfaction: +8 },
+    negotiate_deadline: { customerSatisfaction: -3, deliveryRate: 0 },
+    reject_rush: { customerSatisfaction: -12 },
   },
-  // E2: 部品入荷遅れ
-  E2_parts_delay: {
-    self_alternative: { costControl: -8, deliveryRate: +5 },
-    dispatch_wood_change: { deliveryRate: +3 },
-    reschedule: { deliveryRate: +2, fieldTrust: +3 },
-    defer_e2: { deliveryRate: -15, riskPoints: 20 } as Partial<Scores> & { riskPoints?: number },
+  S2_spec_change: {
+    accept_spec: { costControl: -10, deliveryRate: -5, customerSatisfaction: +5 },
+    investigate_spec: { deliveryRate: 0 },
+    delegate_confirm: { deliveryRate: 0 },
+    reject_spec: { customerSatisfaction: -15 },
   },
-  // E3: 仕様変更
-  E3_spec_change: {
-    accept_change: { costControl: -10, deliveryRate: -5, customerSatisfaction: +5 },
-    negotiate_delay: { customerSatisfaction: -5, deliveryRate: -3 },
-    dispatch_confirm: { deliveryRate: 0 },
-    reject_change: { customerSatisfaction: -15 },
+  S3_customer_complaint: {
+    self_handle_complaint: { customerSatisfaction: +5, fieldTrust: +3 },
+    dispatch_sasaki_complaint: { customerSatisfaction: +2 },
+    defer_complaint: { customerSatisfaction: -15 },
   },
-  // E4: 連鎖危機
-  E4_chain_crisis: {
-    emergency_response: { costControl: -15, deliveryRate: +10 },
-    prioritize_orders: { deliveryRate: -5, customerSatisfaction: -5 },
-    dispatch_sasaki_resolve: { deliveryRate: +3 },
-    defer_e4: { deliveryRate: -20 },
+  S4_new_inquiry: {
+    capacity_study: { customerSatisfaction: +3, deliveryRate: +2 },
+    optimistic_reply: { customerSatisfaction: +5, deliveryRate: -5 },
+    defer_inquiry: { customerSatisfaction: -5 },
   },
-  // E5: 中間デッドライン
-  E5_midday_deadline: {
-    check_status: { deliveryRate: +2 },
-    emergency_meeting: { fieldTrust: +5, deliveryRate: +3 },
+  // 調達系
+  P1_parts_delay: {
+    find_alternative: { costControl: -5, deliveryRate: +5 },
+    delegate_procurement: { deliveryRate: +3 },
+    reschedule_production: { deliveryRate: +2, fieldTrust: +3 },
+    defer_delay: { deliveryRate: -15 },
   },
-  // E6: 外注品質問題
-  E6_quality_issue: {
-    accept_partial: { customerSatisfaction: -5 },
-    urgent_replacement: { customerSatisfaction: +3 },
-    dispatch_tanaka_qa: { customerSatisfaction: -3 },
-    defer_e6: { customerSatisfaction: -10, riskPoints: 10 } as Partial<Scores> & { riskPoints?: number },
+  P2_price_increase: {
+    negotiate_price: { costControl: +3 },
+    find_cheaper: { costControl: +5, customerSatisfaction: -3 },
+    accept_increase: { costControl: -8 },
   },
-  // E7: コストプレッシャー
-  E7_cost_pressure: {
-    report_honestly: { fieldTrust: +3 },
-    minimize_overtime: { costControl: +10, deliveryRate: -5 },
-    delay_answer: { costControl: -3, riskPoints: 5 } as Partial<Scores> & { riskPoints?: number },
+  P3_quality_issue: {
+    accept_partial: { deliveryRate: -3, customerSatisfaction: -3 },
+    demand_urgent: { deliveryRate: +3, customerSatisfaction: +2 },
+    delegate_qa: { customerSatisfaction: -2 },
   },
-  // E8: 最終デッドライン
-  E8_final_deadline: {
-    finalize_shipping: { deliveryRate: +5 },
-    all_hands: { costControl: -15, deliveryRate: +10 },
+  // 製造系
+  M1_line_trouble: {
+    stop_and_fix: { deliveryRate: -5, costControl: -5, fieldTrust: +5 },
+    manual_switch: { deliveryRate: +2, fieldTrust: -3 },
+    delegate_workshop: { deliveryRate: +2 },
+    defer_trouble: { deliveryRate: -10, fieldTrust: -5 },
   },
-  // E9: 工場長登場
-  E9_factory_manager: {
-    show_plan: { fieldTrust: +10, deliveryRate: +5 },
-    request_support: { deliveryRate: +8, costControl: -5 },
+  M2_bottleneck: {
+    add_workers: { deliveryRate: +3, fieldTrust: +2 },
+    reprioritize: { deliveryRate: +2, fieldTrust: +3 },
+    overtime: { deliveryRate: +5, costControl: -8, fieldTrust: -3 },
   },
+  M3_quality_escape: {
+    rework_priority: { deliveryRate: -3, customerSatisfaction: +5 },
+    delegate_rework: { customerSatisfaction: +3 },
+    defer_rework: { customerSatisfaction: -10 },
+  },
+  // 能力系
+  C1_equipment_breakdown: {
+    call_repair: { costControl: -10, deliveryRate: +5 },
+    manual_weld: { deliveryRate: +2, fieldTrust: -3 },
+    reassign_work: { deliveryRate: +3 },
+  },
+  C2_worker_absence: {
+    reassign_workers: { deliveryRate: +3, fieldTrust: +2 },
+    reduce_plan: { deliveryRate: -5 },
+    overtime_others: { deliveryRate: +3, costControl: -5, fieldTrust: -3 },
+  },
+  C3_overtime_limit: {
+    accept_limit: { costControl: +10, deliveryRate: -5 },
+    request_exception: { costControl: -3 },
+    efficiency_up: { costControl: +5, fieldTrust: +5 },
+  },
+  C4_maintenance_due: {
+    do_maintenance: { deliveryRate: -5, fieldTrust: +5 },
+    postpone_maintenance: { deliveryRate: +3, fieldTrust: -3 },
+    partial_maintenance: { deliveryRate: -2, fieldTrust: +2 },
+  },
+  // 工場長指令（受領のみ）
+  D1_cost_reduction: { acknowledge_cost: {} },
+  D2_delivery_push: { acknowledge_delivery: {} },
+  D3_quality_focus: { acknowledge_quality: {} },
+  D4_capacity_increase: { acknowledge_increase: {} },
 }
 
-// 関係値変動テーブル
-const RELATIONSHIP_DELTAS: Record<
-  string,
-  Record<string, Partial<Record<CharacterId, number>>>
-> = {
-  E1_equipment_alarm: {
-    self_fix: { workshop: +5 },
-    dispatch_tanaka: { workshop: +2 },
-    dispatch_sasaki: { workshop: -2 },  // 谷口は佐々木が苦手
-    defer: { workshop: -10 },
+// --- 関係値変動テーブル ---
+const RELATIONSHIP_DELTAS: Record<string, Record<string, Partial<Record<CharacterId, number>>>> = {
+  S1_rush_order: {
+    accept_rush: { sales: +5, workshop: -3 },
+    negotiate_deadline: { sales: -5 },
+    reject_rush: { sales: -10 },
   },
-  E2_parts_delay: {
-    self_alternative: { procurement: +5 },
-    dispatch_wood_change: { procurement: +3 },
-    reschedule: { workshop: +5, procurement: +3 },
-    defer_e2: { procurement: -8, workshop: -5 },
+  S2_spec_change: {
+    accept_spec: { sales: +3 },
+    investigate_spec: {},
+    delegate_confirm: {},
+    reject_spec: { sales: -10 },
   },
-  E3_spec_change: {
-    accept_change: { sales: +3 },
-    negotiate_delay: { sales: -5 },
-    dispatch_confirm: { sales: 0 },
-    reject_change: { sales: -10, subcontractor: 0 },
+  S3_customer_complaint: {
+    self_handle_complaint: { sales: +5, workshop: +3 },
+    dispatch_sasaki_complaint: { subordinate2: +3 },
+    defer_complaint: { sales: -8 },
   },
-  E4_chain_crisis: {
-    emergency_response: { workshop: +5 },
-    prioritize_orders: { workshop: +3 },
-    dispatch_sasaki_resolve: { workshop: -3 },
-    defer_e4: { workshop: -15 },
+  M1_line_trouble: {
+    stop_and_fix: { workshop: +5 },
+    manual_switch: { workshop: -5 },
+    delegate_workshop: { workshop: +3 },
+    defer_trouble: { workshop: -10 },
   },
-  E5_midday_deadline: {
-    check_status: {},
-    emergency_meeting: { workshop: +5, procurement: +3 },
+  M2_bottleneck: {
+    add_workers: { workshop: +3 },
+    reprioritize: { workshop: +5 },
+    overtime: { workshop: -5 },
   },
-  E6_quality_issue: {
-    accept_partial: { subcontractor: +5 },
-    urgent_replacement: { subcontractor: -8 },
-    dispatch_tanaka_qa: { subcontractor: -2 },
-    defer_e6: { subcontractor: +5 },
+  P1_parts_delay: {
+    find_alternative: { procurement: +5 },
+    delegate_procurement: { procurement: +3 },
+    reschedule_production: { workshop: +3, procurement: +2 },
+    defer_delay: { procurement: -8, workshop: -5 },
   },
-  E7_cost_pressure: {
-    report_honestly: { dept_manager: +5 },
-    minimize_overtime: { dept_manager: +8, workshop: -5 },
-    delay_answer: { dept_manager: -5 },
+  P3_quality_issue: {
+    accept_partial: {},
+    demand_urgent: {},
+    delegate_qa: { subordinate1: +2 },
   },
-  E8_final_deadline: {
-    finalize_shipping: {},
-    all_hands: { workshop: -5 },
+  C1_equipment_breakdown: {
+    call_repair: { workshop: +3 },
+    manual_weld: { workshop: -3 },
+    reassign_work: { workshop: +2 },
   },
-  E9_factory_manager: {
-    show_plan: { factory_manager: +15 },
-    request_support: { factory_manager: +10 },
+  C2_worker_absence: {
+    reassign_workers: { workshop: +3 },
+    reduce_plan: {},
+    overtime_others: { workshop: -5 },
   },
 }
 
@@ -132,20 +159,13 @@ const FAILURE_PENALTIES: Record<FailureLevel, Partial<Scores>> = {
   critical: { deliveryRate: -20, customerSatisfaction: -10, fieldTrust: -10 },
 }
 
-// スコア適用（0〜100の範囲にクランプ）
-export function applyScoreDelta(
-  current: Scores,
-  delta: Partial<Scores>
-): Scores {
+// --- スコア適用（0〜100） ---
+export function applyScoreDelta(current: Scores, delta: Partial<Scores>): Scores {
   return {
     deliveryRate: clamp((current.deliveryRate ?? 0) + (delta.deliveryRate ?? 0), 0, 100),
     fieldTrust: clamp((current.fieldTrust ?? 0) + (delta.fieldTrust ?? 0), 0, 100),
     costControl: clamp((current.costControl ?? 0) + (delta.costControl ?? 0), 0, 100),
-    customerSatisfaction: clamp(
-      (current.customerSatisfaction ?? 0) + (delta.customerSatisfaction ?? 0),
-      0,
-      100
-    ),
+    customerSatisfaction: clamp((current.customerSatisfaction ?? 0) + (delta.customerSatisfaction ?? 0), 0, 100),
   }
 }
 
@@ -153,7 +173,7 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
-// アクション結果からスコア変動を計算
+// スコア変動を計算
 export function calcScoreDeltas(
   eventId: string,
   choiceId: string,
@@ -167,8 +187,7 @@ export function calcScoreDeltas(
       deliveryRate: (base.deliveryRate ?? 0) + (penalty.deliveryRate ?? 0),
       fieldTrust: (base.fieldTrust ?? 0) + (penalty.fieldTrust ?? 0),
       costControl: (base.costControl ?? 0) + (penalty.costControl ?? 0),
-      customerSatisfaction:
-        (base.customerSatisfaction ?? 0) + (penalty.customerSatisfaction ?? 0),
+      customerSatisfaction: (base.customerSatisfaction ?? 0) + (penalty.customerSatisfaction ?? 0),
     }
   }
   return base
@@ -183,7 +202,6 @@ export function calcRelationshipDeltas(
 ): Partial<Record<CharacterId, number>> {
   const base = RELATIONSHIP_DELTAS[eventId]?.[choiceId] ?? {}
   if (!success && failureLevel) {
-    // 失敗時は関係値がさらに下がる
     const penaltyMultiplier = failureLevel === 'critical' ? 2 : 1
     const adjusted: Partial<Record<CharacterId, number>> = {}
     for (const [key, val] of Object.entries(base)) {
@@ -194,76 +212,116 @@ export function calcRelationshipDeltas(
   return base
 }
 
-// ゲームオーバー判定
+// --- ゲームオーバー判定 ---
 export function checkGameOver(state: GameState): {
   isOver: boolean
   reason?: string
 } {
   const { scores, relationships } = state
-  if (scores.deliveryRate <= 50) {
-    return {
-      isOver: true,
-      reason: '納期達成率が50%以下になりました。今日の出荷計画は深刻な状態です。',
-    }
+  if (scores.deliveryRate <= 30) {
+    return { isOver: true, reason: '納期達成率が30%以下になりました。出荷計画は壊滅的な状態です。' }
   }
-  if (relationships.workshop <= 20) {
-    return {
-      isOver: true,
-      reason:
-        '製造職長 谷口との関係が壊れました。現場からの情報が完全に遮断されました。',
-    }
+  if (relationships.workshop <= 15) {
+    return { isOver: true, reason: '製造職長 谷口との関係が壊れました。現場からの協力が得られません。' }
   }
-  if (scores.customerSatisfaction <= 0) {
-    return {
-      isOver: true,
-      reason: '顧客満足度がゼロになりました。失注・クレームが確定しました。',
-    }
+  if (scores.customerSatisfaction <= 10) {
+    return { isOver: true, reason: '顧客満足度が危機的水準に。主要顧客からの取引停止通告。' }
   }
   return { isOver: false }
+}
+
+// --- 週次評価 ---
+export function evaluateWeekly(state: GameState): WeeklyReport {
+  const { scores } = state
+  const directive = state.activeDirective
+
+  const directiveResult = directive
+    ? evaluateDirective(directive, scores)
+    : { achieved: false, message: '', bonusScore: 0 }
+
+  const total = calcTotalScore(scores) + directiveResult.bonusScore
+
+  return {
+    week: state.currentWeek,
+    scores: { ...scores },
+    directiveAchieved: directiveResult.achieved,
+    directiveTitle: directive?.title ?? '',
+    highlights: generateHighlights(state),
+    supplierInteractions: state.suppliers.filter(s => s.lastInteraction?.week === state.currentWeek).length,
+    eventsHandled: state.eventStream.filter(e => e.timestamp.week === state.currentWeek && e.isRead).length,
+    eventsDeferred: state.riskPoints > 20 ? Math.floor(state.riskPoints / 10) : 0,
+    grade: getGrade(total),
+  }
+}
+
+// --- 月次総合評価 ---
+export function evaluateMonthly(weeklyReports: WeeklyReport[], finalScores: Scores): MonthlyReport {
+  // 週ごとの重み: W1=15%, W2=20%, W3=25%, W4=40%
+  const weights = [0.15, 0.20, 0.25, 0.40]
+
+  let weightedTotal = 0
+  for (let i = 0; i < weeklyReports.length; i++) {
+    const weekScore = calcTotalScore(weeklyReports[i].scores)
+    const weight = weights[i] ?? 0.25
+    weightedTotal += weekScore * weight
+  }
+
+  // 指令達成ボーナス
+  const directiveBonus = weeklyReports.filter(r => r.directiveAchieved).length * 3
+  const totalScore = Math.round(weightedTotal + directiveBonus)
+
+  const grade = getGrade(totalScore)
+  const message = getMonthlyMessage(grade)
+
+  return {
+    weeklyReports,
+    finalScores,
+    totalScore,
+    grade,
+    message,
+  }
+}
+
+function calcTotalScore(scores: Scores): number {
+  return (
+    scores.deliveryRate * 0.35 +
+    scores.fieldTrust * 0.25 +
+    scores.costControl * 0.2 +
+    scores.customerSatisfaction * 0.2
+  )
+}
+
+function getGrade(total: number): 'S' | 'A' | 'B' | 'C' | 'D' {
+  if (total >= 85) return 'S'
+  if (total >= 70) return 'A'
+  if (total >= 55) return 'B'
+  if (total >= 40) return 'C'
+  return 'D'
+}
+
+function getMonthlyMessage(grade: string): string {
+  switch (grade) {
+    case 'S': return '完璧な1ヶ月。あなたは伝説の生産管理リーダーだ。工場長 村上も満足げに頷いている。'
+    case 'A': return 'よくやった。大きなトラブルを乗り越え、工場を回し続けた。来月も期待している。'
+    case 'B': return '何とか乗り切った1ヶ月。課題は残るが、経験は確実に積めた。'
+    case 'C': return '厳しい1ヶ月だった。改善の余地は多い。来月は巻き返せ。'
+    default: return 'PRODUCTION HELL——この1ヶ月は地獄だった。しかし、ここから学べることは多い。'
+  }
+}
+
+function generateHighlights(state: GameState): string[] {
+  const highlights: string[] = []
+  if (state.scores.deliveryRate >= 90) highlights.push('納期達成率が高水準を維持')
+  if (state.scores.deliveryRate <= 60) highlights.push('納期達成率が低下傾向')
+  if (state.scores.costControl >= 80) highlights.push('コスト管理が良好')
+  if (state.scores.costControl <= 50) highlights.push('コスト超過が発生')
+  if (state.workCapacity.overallCapacity < 70) highlights.push('作業能力が低下中')
+  const goodSuppliers = state.suppliers.filter(s => s.affinity >= 70).length
+  if (goodSuppliers >= 3) highlights.push('サプライヤーとの良好な関係を構築')
+  return highlights.length > 0 ? highlights : ['特記事項なし']
 }
 
 // 保留リスクポイントによる連鎖イベント発動判定
 export function shouldTriggerChainEvent(riskPoints: number): boolean {
   return riskPoints >= 30
-}
-
-// 最終スコア評価
-export function evaluateFinalScore(state: GameState): {
-  grade: 'S' | 'A' | 'B' | 'C' | 'D'
-  message: string
-  totalScore: number
-} {
-  const { scores, mrpState } = state
-  const deliveryActual =
-    mrpState.totalPlanned > 0
-      ? (mrpState.totalCompleted / mrpState.totalPlanned) * 100
-      : 0
-
-  const total =
-    scores.deliveryRate * 0.35 +
-    scores.fieldTrust * 0.25 +
-    scores.costControl * 0.2 +
-    scores.customerSatisfaction * 0.2
-
-  let grade: 'S' | 'A' | 'B' | 'C' | 'D'
-  let message: string
-
-  if (total >= 85) {
-    grade = 'S'
-    message = '完璧な生産管理。今日の1日は伝説になる。'
-  } else if (total >= 70) {
-    grade = 'A'
-    message = 'よくやった。大きな問題なく1日を乗り切った。'
-  } else if (total >= 55) {
-    grade = 'B'
-    message = '何とか乗り切ったが、積み残しも多い。'
-  } else if (total >= 40) {
-    grade = 'C'
-    message = '今日は厳しかった。明日への教訓を見つけよう。'
-  } else {
-    grade = 'D'
-    message = 'PRODUCTION HELL——今日の1日はまさに地獄だった。'
-  }
-
-  return { grade, message, totalScore: Math.round(total) }
 }
