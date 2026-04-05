@@ -179,7 +179,8 @@ export default function App() {
     advanceDay,
     continueToNextWeek,
     investigate,
-    allocateOrder,
+    startAssembly,
+    updateProductionPlan,
     resetGame,
   } = useGameState()
 
@@ -221,7 +222,8 @@ export default function App() {
         onAction={performAction}
         onInvestigate={investigate}
         onAdvanceDay={advanceDay}
-        onAllocateOrder={allocateOrder}
+        onStartAssembly={startAssembly}
+        onUpdateProductionPlan={updateProductionPlan}
       />
     )
   }

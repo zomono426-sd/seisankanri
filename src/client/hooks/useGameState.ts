@@ -8,6 +8,7 @@ import type {
   MonthlyReport,
   NegotiationTone,
   SupplierId,
+  LineProductionPlan,
 } from '../../shared/types'
 import { api } from '../api/client'
 
@@ -144,12 +145,28 @@ export function useGameState() {
     [sessionId, isProcessing]
   )
 
-  const allocateOrder = useCallback(
-    async (orderNo: string, quantity: number) => {
+  const startAssembly = useCallback(
+    async (orderNo: string) => {
       if (!sessionId || isProcessing) return
       setIsProcessing(true)
       try {
-        const result = await api.allocateOrder({ sessionId, orderNo, quantity })
+        const result = await api.startAssembly({ sessionId, orderNo })
+        setGameState(result.gameState)
+      } catch (err) {
+        setError(String(err))
+      } finally {
+        setIsProcessing(false)
+      }
+    },
+    [sessionId, isProcessing]
+  )
+
+  const updateProductionPlan = useCallback(
+    async (plans: LineProductionPlan[]) => {
+      if (!sessionId || isProcessing) return
+      setIsProcessing(true)
+      try {
+        const result = await api.updateProductionPlan({ sessionId, plans })
         setGameState(result.gameState)
       } catch (err) {
         setError(String(err))
@@ -187,7 +204,8 @@ export function useGameState() {
     continueToNextWeek,
     investigate,
     negotiate,
-    allocateOrder,
+    startAssembly,
+    updateProductionPlan,
     resetGame,
   }
 }

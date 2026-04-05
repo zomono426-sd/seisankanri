@@ -187,7 +187,7 @@ export interface ProductionOrder {
   dueWeek: number              // 納期の週（1-4）
   dueDay: number               // 納期の日（1-5、dueWeek内の曜日）
   completedQuantity: number
-  status: 'planned' | 'in_progress' | 'producing' | 'completed' | 'delayed' | 'blocked'
+  status: 'planned' | 'waiting_parts' | 'in_progress' | 'producing' | 'completed' | 'delayed' | 'blocked'
   line: string
   priority: 'normal' | 'high' | 'urgent'
   // --- 製造リードタイム関連（ATO: 受注組立生産） ---
@@ -218,25 +218,40 @@ export interface InventoryItem {
   monthlyPlanQuantity?: number
 }
 
+// --- BOM（部品構成表） ---
+export interface BomEntry {
+  parentPartNo: string    // 親品番（完成品 or 中間品）
+  childPartNo: string     // 子品番（中間品 or 原材料）
+  quantityPer: number     // 親1台あたりの子の所要量
+}
+
+// --- ラインの中間品生産計画 ---
+export interface LineProductionPlan {
+  lineId: string            // ProductionLine.id
+  targetPartNo: string      // 生産対象の中間品品番（InventoryItem.partNo）
+  dailyTarget: number       // 日産目標台数
+}
+
 export interface InventorySnapshot {
   week: number
   day: number
-  lineStock: Record<string, number>
-  totalStock: number
-  dailyProduced: number
-  dailyAllocated: number
+  intermediateStock: Record<string, number>  // 中間品品番 → 在庫数
+  totalIntermediateStock: number             // 中間品の合計
+  dailyProduced: number                     // 中間品の日次生産数
+  dailyAssembled: number                    // 受注組立で消費された数
   events: string[]
 }
 
 export interface MrpState {
   productionOrders: ProductionOrder[]
   inventory: InventoryItem[]
-  lineStock: Record<string, number>  // ライン名 → 利用可能在庫数
+  bom: BomEntry[]                        // BOM
+  productionPlans: LineProductionPlan[]   // ラインごとの生産計画
   weeklyPlanned: number        // 全受注の計画台数合計
   weeklyCompleted: number      // 全受注の完了台数合計
   inventoryHistory: InventorySnapshot[]  // 日次スナップショット
   totalDailyProduced: number   // 本日生産量
-  totalAllocatedToday: number  // 本日引当量
+  totalAllocatedToday: number  // 本日組立量
 }
 
 // --- イベントストリームアイテム ---

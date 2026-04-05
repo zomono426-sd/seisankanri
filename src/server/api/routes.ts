@@ -15,7 +15,8 @@ import { createInitialGameState } from '../game/initialState.js'
 import { evaluateWeekly, evaluateMonthly } from '../game/scoring.js'
 import { runImpactAnalysis } from '../game/impactAnalysis.js'
 import { resolveNegotiation, generateNegotiationChoices, getSupplier } from '../game/suppliers.js'
-import { allocateToOrder } from '../game/capacity.js'
+import { startAssembly } from '../game/capacity.js'
+import type { LineProductionPlan } from '../../shared/types.js'
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai'
 
 export function createRouter(sessions: SessionStore, apiKey: string) {
@@ -279,12 +280,11 @@ export function createRouter(sessions: SessionStore, apiKey: string) {
     res.json(response)
   })
 
-  // ── POST /api/game/allocate-order ── ユーザーが在庫を受注に引き当て
-  router.post('/game/allocate-order', (req: Request, res: Response) => {
-    const { sessionId, orderNo, quantity } = req.body as {
+  // ── POST /api/game/start-assembly ── 受注組立開始（ATO）
+  router.post('/game/start-assembly', (req: Request, res: Response) => {
+    const { sessionId, orderNo } = req.body as {
       sessionId: string
       orderNo: string
-      quantity: number
     }
 
     const state = sessions.get(sessionId)
@@ -293,40 +293,99 @@ export function createRouter(sessions: SessionStore, apiKey: string) {
       return
     }
 
-    try {
-      const { updatedOrders, updatedStock, allocatedQuantity } = allocateToOrder(
-        state.mrpState.productionOrders,
-        state.mrpState.lineStock,
-        orderNo,
-        quantity,
-        state.currentWeek,
-        state.currentDay
-      )
-
-      // 在庫履歴の最新エントリを更新（引当量を加算し、ラインストックを反映）
-      const history = [...(state.mrpState.inventoryHistory ?? [])]
-      if (history.length > 0) {
-        const latest = { ...history[history.length - 1] }
-        latest.dailyAllocated += allocatedQuantity
-        latest.lineStock = { ...updatedStock }
-        latest.totalStock = Object.values(updatedStock).reduce((s, v) => s + v, 0)
-        history[history.length - 1] = latest
-      }
-
-      const newMrp = {
-        ...state.mrpState,
-        productionOrders: updatedOrders,
-        lineStock: updatedStock,
-        weeklyCompleted: updatedOrders.reduce((sum, o) => sum + o.completedQuantity, 0),
-        inventoryHistory: history,
-        totalAllocatedToday: (state.mrpState.totalAllocatedToday ?? 0) + allocatedQuantity,
-      }
-      const newState = { ...state, mrpState: newMrp }
-      sessions.set(sessionId, newState)
-      res.json({ success: true, data: { gameState: newState } })
-    } catch (err) {
-      res.status(400).json({ success: false, error: String(err) })
+    const order = state.mrpState.productionOrders.find(o => o.orderNo === orderNo)
+    if (!order) {
+      res.status(404).json({ success: false, error: '受注が見つかりません' })
+      return
     }
+    if (order.status !== 'planned' && order.status !== 'waiting_parts') {
+      res.status(400).json({ success: false, error: 'この受注は組立開始できる状態ではありません' })
+      return
+    }
+
+    const result = startAssembly(
+      order,
+      state.mrpState.inventory,
+      state.mrpState.bom,
+      state.currentWeek,
+      state.currentDay
+    )
+
+    const updatedOrders = state.mrpState.productionOrders.map(o =>
+      o.orderNo === orderNo ? result.updatedOrder : o
+    )
+
+    // スナップショットの組立数を更新
+    const history = [...(state.mrpState.inventoryHistory ?? [])]
+    if (history.length > 0 && result.success) {
+      const latest = { ...history[history.length - 1] }
+      latest.dailyAssembled += order.quantity
+      history[history.length - 1] = latest
+    }
+
+    const newMrp = {
+      ...state.mrpState,
+      productionOrders: updatedOrders,
+      inventory: result.updatedInventory,
+      weeklyCompleted: updatedOrders.reduce((sum, o) => sum + o.completedQuantity, 0),
+      inventoryHistory: history,
+      totalAllocatedToday: (state.mrpState.totalAllocatedToday ?? 0) + (result.success ? order.quantity : 0),
+    }
+    const newState = { ...state, mrpState: newMrp }
+    sessions.set(sessionId, newState)
+
+    res.json({
+      success: true,
+      data: {
+        gameState: newState,
+        assemblyResult: {
+          started: result.success,
+          missingParts: result.missingParts,
+          message: result.success
+            ? `受注 ${orderNo} の組立を開始しました`
+            : '必要な部品が不足しています。中間品が揃い次第、自動的に組立を開始します。',
+        },
+      },
+    })
+  })
+
+  // ── POST /api/game/update-production-plan ── 生産計画変更
+  router.post('/game/update-production-plan', (req: Request, res: Response) => {
+    const { sessionId, plans } = req.body as {
+      sessionId: string
+      plans: LineProductionPlan[]
+    }
+
+    const state = sessions.get(sessionId)
+    if (!state) {
+      res.status(404).json({ success: false, error: 'Session not found' })
+      return
+    }
+
+    // バリデーション
+    for (const plan of plans) {
+      const line = state.productionLines.find(l => l.id === plan.lineId)
+      if (!line) {
+        res.status(400).json({ success: false, error: `ライン ${plan.lineId} が存在しません` })
+        return
+      }
+      const intermediate = state.mrpState.inventory.find(
+        i => i.partNo === plan.targetPartNo && i.itemType === 'intermediate'
+      )
+      if (!intermediate) {
+        res.status(400).json({ success: false, error: `中間品 ${plan.targetPartNo} が存在しません` })
+        return
+      }
+      if (plan.dailyTarget > line.capacity) {
+        res.status(400).json({ success: false, error: `日産目標 ${plan.dailyTarget} がライン能力 ${line.capacity} を超えています` })
+        return
+      }
+    }
+
+    const newMrp = { ...state.mrpState, productionPlans: plans }
+    const newState = { ...state, mrpState: newMrp }
+    sessions.set(sessionId, newState)
+    res.json({ success: true, data: { gameState: newState } })
   })
 
   // ── GET /api/game/week-result/:sessionId ── 週次結果

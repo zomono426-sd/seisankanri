@@ -1,4 +1,4 @@
-import type { GameState, EventChoice, GameEvent, ImpactAnalysis } from '../../shared/types'
+import type { GameState, EventChoice, GameEvent, ImpactAnalysis, LineProductionPlan } from '../../shared/types'
 import { MonitoringDashboard } from './MonitoringDashboard'
 import { EventStream } from './EventStream'
 import { DecisionPanel } from './DecisionPanel'
@@ -13,7 +13,8 @@ interface GameLayoutProps {
   onAction: (event: GameEvent, choice: EventChoice) => void
   onInvestigate: (eventId: string, choiceId: string) => void
   onAdvanceDay: () => void
-  onAllocateOrder: (orderNo: string, quantity: number) => void
+  onStartAssembly: (orderNo: string) => void
+  onUpdateProductionPlan: (plans: LineProductionPlan[]) => void
 }
 
 function getDayName(day: number): string {
@@ -29,7 +30,8 @@ export function GameLayout({
   onAction,
   onInvestigate,
   onAdvanceDay,
-  onAllocateOrder,
+  onStartAssembly,
+  onUpdateProductionPlan,
 }: GameLayoutProps) {
   return (
     <div className="h-screen bg-factory-bg text-factory-text flex flex-col overflow-hidden">
@@ -85,7 +87,7 @@ export function GameLayout({
         <main className="flex-1 flex flex-col overflow-hidden p-3 gap-3">
           {/* モニタリングダッシュボード */}
           <div className="flex-1 overflow-hidden">
-            <MonitoringDashboard gameState={gameState} onAllocateOrder={onAllocateOrder} />
+            <MonitoringDashboard gameState={gameState} onStartAssembly={onStartAssembly} onUpdateProductionPlan={onUpdateProductionPlan} />
           </div>
 
           {/* 意思決定パネル（下部） */}

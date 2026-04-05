@@ -136,23 +136,48 @@ const INITIAL_MRP: MrpState = {
   ],
   inventory: [
     // --- 原料 (rawMaterial) ---
-    { partNo: 'SV-3000', partName: 'ACサーボモーター SV-3000', itemType: 'rawMaterial', onHand: 4, allocated: 2, free: 2, safetyStock: 2, reorderPoint: 4, leadTimeDays: 5, supplierId: 'daito_denki', nextDeliveryWeek: 1, nextDeliveryDay: 4 },
-    { partNo: 'CB-RAL7035', partName: '制御盤パネル RAL7035', itemType: 'rawMaterial', onHand: 5, allocated: 3, free: 2, safetyStock: 2, reorderPoint: 5, leadTimeDays: 3, supplierId: 'maruyama_kinzoku', nextDeliveryWeek: 1, nextDeliveryDay: 3 },
-    { partNo: 'BELT-200', partName: '搬送ベルト 200mm', itemType: 'rawMaterial', onHand: 20, allocated: 9, free: 11, safetyStock: 5, reorderPoint: 10, leadTimeDays: 4, supplierId: 'tokai_logistics', nextDeliveryWeek: 2, nextDeliveryDay: 1 },
-    { partNo: 'PCB-MAIN', partName: 'メイン制御基板', itemType: 'rawMaterial', onHand: 6, allocated: 3, free: 3, safetyStock: 2, reorderPoint: 5, leadTimeDays: 5, supplierId: 'mikawa_seimitsu', nextDeliveryWeek: 1, nextDeliveryDay: 5 },
+    { partNo: 'SV-3000', partName: 'ACサーボモーター SV-3000', itemType: 'rawMaterial', onHand: 4, allocated: 0, free: 4, safetyStock: 2, reorderPoint: 4, leadTimeDays: 5, supplierId: 'daito_denki', nextDeliveryWeek: 1, nextDeliveryDay: 4 },
+    { partNo: 'CB-RAL7035', partName: '制御盤パネル RAL7035', itemType: 'rawMaterial', onHand: 5, allocated: 0, free: 5, safetyStock: 2, reorderPoint: 5, leadTimeDays: 3, supplierId: 'maruyama_kinzoku', nextDeliveryWeek: 1, nextDeliveryDay: 3 },
+    { partNo: 'BELT-200', partName: '搬送ベルト 200mm', itemType: 'rawMaterial', onHand: 20, allocated: 0, free: 20, safetyStock: 5, reorderPoint: 10, leadTimeDays: 4, supplierId: 'tokai_logistics', nextDeliveryWeek: 2, nextDeliveryDay: 1 },
+    { partNo: 'PCB-MAIN', partName: 'メイン制御基板', itemType: 'rawMaterial', onHand: 6, allocated: 0, free: 6, safetyStock: 2, reorderPoint: 5, leadTimeDays: 5, supplierId: 'mikawa_seimitsu', nextDeliveryWeek: 1, nextDeliveryDay: 5 },
     // --- 中間品 (intermediate) ---
-    { partNo: 'WF-FRAME-A', partName: '溶接フレーム Type-A', itemType: 'intermediate', onHand: 12, allocated: 8, free: 4, safetyStock: 3, reorderPoint: 8, leadTimeDays: 2, weeklyPlanQuantity: 10, monthlyPlanQuantity: 40 },
-    { partNo: 'SUB-DRIVE', partName: 'サーボ駆動サブアセンブリ', itemType: 'intermediate', onHand: 5, allocated: 2, free: 3, safetyStock: 3, reorderPoint: 6, leadTimeDays: 1, weeklyPlanQuantity: 8, monthlyPlanQuantity: 32 },
-    { partNo: 'SUB-CTRL', partName: '制御ユニットサブアセンブリ', itemType: 'intermediate', onHand: 4, allocated: 2, free: 2, safetyStock: 2, reorderPoint: 5, leadTimeDays: 1, weeklyPlanQuantity: 6, monthlyPlanQuantity: 24 },
-    // --- 製品 (product) — 受注組立生産のため安全在庫なし ---
-    { partNo: 'FIN-CONV', partName: '搬送コンベア完成品', itemType: 'product', onHand: 0, allocated: 0, free: 0, safetyStock: 0, reorderPoint: 0, leadTimeDays: 2 },
-    { partNo: 'FIN-FRAME', partName: '溶接フレーム完成品', itemType: 'product', onHand: 0, allocated: 0, free: 0, safetyStock: 0, reorderPoint: 0, leadTimeDays: 1 },
+    { partNo: 'WF-FRAME-A', partName: '溶接フレーム Type-A', itemType: 'intermediate', onHand: 12, allocated: 0, free: 12, safetyStock: 3, reorderPoint: 8, leadTimeDays: 2, weeklyPlanQuantity: 10, monthlyPlanQuantity: 40 },
+    { partNo: 'SUB-DRIVE', partName: 'サーボ駆動サブアセンブリ', itemType: 'intermediate', onHand: 5, allocated: 0, free: 5, safetyStock: 3, reorderPoint: 6, leadTimeDays: 1, weeklyPlanQuantity: 8, monthlyPlanQuantity: 32 },
+    { partNo: 'SUB-CTRL', partName: '制御ユニットサブアセンブリ', itemType: 'intermediate', onHand: 4, allocated: 0, free: 4, safetyStock: 2, reorderPoint: 5, leadTimeDays: 1, weeklyPlanQuantity: 6, monthlyPlanQuantity: 24 },
   ],
-  lineStock: {
-    '第1組立ライン': 0,
-    '第2組立ライン': 0,
-    '溶接ライン': 0,
-  },
+  // --- BOM（部品構成表） ---
+  bom: [
+    // 完成品 → 中間品/原材料
+    { parentPartNo: 'TW-CONV-100', childPartNo: 'WF-FRAME-A', quantityPer: 1 },
+    { parentPartNo: 'TW-CONV-100', childPartNo: 'SUB-DRIVE', quantityPer: 1 },
+    { parentPartNo: 'TW-CONV-100', childPartNo: 'BELT-200', quantityPer: 2 },
+    { parentPartNo: 'TW-CONV-101', childPartNo: 'WF-FRAME-A', quantityPer: 1 },
+    { parentPartNo: 'TW-CONV-101', childPartNo: 'SUB-DRIVE', quantityPer: 1 },
+    { parentPartNo: 'TW-CONV-101', childPartNo: 'BELT-200', quantityPer: 3 },
+    { parentPartNo: 'TW-CONV-110', childPartNo: 'WF-FRAME-A', quantityPer: 1 },
+    { parentPartNo: 'TW-CONV-110', childPartNo: 'SUB-DRIVE', quantityPer: 2 },
+    { parentPartNo: 'TW-CONV-110', childPartNo: 'BELT-200', quantityPer: 2 },
+    { parentPartNo: 'TW-FRAME-050', childPartNo: 'WF-FRAME-A', quantityPer: 1 },
+    { parentPartNo: 'TW-FRAME-060', childPartNo: 'WF-FRAME-A', quantityPer: 2 },
+    { parentPartNo: 'TW-SERVO-300', childPartNo: 'SUB-DRIVE', quantityPer: 1 },
+    { parentPartNo: 'TW-SERVO-300', childPartNo: 'SUB-CTRL', quantityPer: 1 },
+    { parentPartNo: 'TW-CTRL-200', childPartNo: 'SUB-CTRL', quantityPer: 1 },
+    { parentPartNo: 'TW-CTRL-200', childPartNo: 'CB-RAL7035', quantityPer: 1 },
+    { parentPartNo: 'TW-CTRL-200', childPartNo: 'PCB-MAIN', quantityPer: 2 },
+    { parentPartNo: 'TW-CTRL-100', childPartNo: 'SUB-CTRL', quantityPer: 1 },
+    { parentPartNo: 'TW-CTRL-100', childPartNo: 'CB-RAL7035', quantityPer: 1 },
+    { parentPartNo: 'TW-CTRL-100', childPartNo: 'PCB-MAIN', quantityPer: 1 },
+    // 中間品 → 原材料
+    { parentPartNo: 'SUB-DRIVE', childPartNo: 'SV-3000', quantityPer: 1 },
+    { parentPartNo: 'SUB-CTRL', childPartNo: 'PCB-MAIN', quantityPer: 1 },
+    // WF-FRAME-A は社内溶接加工のため原材料なし
+  ],
+  // --- ラインごとの中間品生産計画 ---
+  productionPlans: [
+    { lineId: 'line1', targetPartNo: 'SUB-DRIVE', dailyTarget: 4 },
+    { lineId: 'line2', targetPartNo: 'SUB-CTRL', dailyTarget: 3 },
+    { lineId: 'weld', targetPartNo: 'WF-FRAME-A', dailyTarget: 3 },
+  ],
   weeklyPlanned: 63,
   weeklyCompleted: 0,
   inventoryHistory: [],
