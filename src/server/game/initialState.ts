@@ -22,6 +22,8 @@ const INITIAL_MRP: MrpState = {
       status: 'planned',
       line: '第1組立ライン',
       priority: 'high',
+      productionLeadTimeDays: 2,
+      allocatedQuantity: 0,
     },
     {
       orderNo: 'MO-W1-004',
@@ -35,6 +37,8 @@ const INITIAL_MRP: MrpState = {
       status: 'planned',
       line: '溶接ライン',
       priority: 'urgent',
+      productionLeadTimeDays: 1,
+      allocatedQuantity: 0,
     },
     // W2納期
     {
@@ -49,6 +53,8 @@ const INITIAL_MRP: MrpState = {
       status: 'planned',
       line: '第1組立ライン',
       priority: 'high',
+      productionLeadTimeDays: 2,
+      allocatedQuantity: 0,
     },
     {
       orderNo: 'MO-W2-002',
@@ -62,6 +68,8 @@ const INITIAL_MRP: MrpState = {
       status: 'planned',
       line: '第2組立ライン',
       priority: 'normal',
+      productionLeadTimeDays: 2,
+      allocatedQuantity: 0,
     },
     // W3納期
     {
@@ -76,6 +84,8 @@ const INITIAL_MRP: MrpState = {
       status: 'planned',
       line: '第1組立ライン',
       priority: 'normal',
+      productionLeadTimeDays: 3,
+      allocatedQuantity: 0,
     },
     {
       orderNo: 'MO-W3-002',
@@ -89,6 +99,8 @@ const INITIAL_MRP: MrpState = {
       status: 'planned',
       line: '第2組立ライン',
       priority: 'normal',
+      productionLeadTimeDays: 2,
+      allocatedQuantity: 0,
     },
     // W4納期 — 大型受注
     {
@@ -103,6 +115,8 @@ const INITIAL_MRP: MrpState = {
       status: 'planned',
       line: '溶接ライン',
       priority: 'high',
+      productionLeadTimeDays: 2,
+      allocatedQuantity: 0,
     },
     {
       orderNo: 'MO-W4-002',
@@ -116,6 +130,8 @@ const INITIAL_MRP: MrpState = {
       status: 'planned',
       line: '第2組立ライン',
       priority: 'normal',
+      productionLeadTimeDays: 3,
+      allocatedQuantity: 0,
     },
   ],
   inventory: [
