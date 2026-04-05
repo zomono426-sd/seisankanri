@@ -15,6 +15,7 @@ import { createInitialGameState } from '../game/initialState.js'
 import { evaluateWeekly, evaluateMonthly } from '../game/scoring.js'
 import { runImpactAnalysis } from '../game/impactAnalysis.js'
 import { resolveNegotiation, generateNegotiationChoices, getSupplier } from '../game/suppliers.js'
+import { allocateToOrder } from '../game/capacity.js'
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai'
 
 export function createRouter(sessions: SessionStore, apiKey: string) {
@@ -276,6 +277,43 @@ export function createRouter(sessions: SessionStore, apiKey: string) {
       },
     }
     res.json(response)
+  })
+
+  // ── POST /api/game/allocate-order ── ユーザーが在庫を受注に引き当て
+  router.post('/game/allocate-order', (req: Request, res: Response) => {
+    const { sessionId, orderNo, quantity } = req.body as {
+      sessionId: string
+      orderNo: string
+      quantity: number
+    }
+
+    const state = sessions.get(sessionId)
+    if (!state) {
+      res.status(404).json({ success: false, error: 'Session not found' })
+      return
+    }
+
+    try {
+      const { updatedOrders, updatedStock } = allocateToOrder(
+        state.mrpState.productionOrders,
+        state.mrpState.lineStock,
+        orderNo,
+        quantity,
+        state.currentWeek,
+        state.currentDay
+      )
+      const newMrp = {
+        ...state.mrpState,
+        productionOrders: updatedOrders,
+        lineStock: updatedStock,
+        weeklyCompleted: updatedOrders.reduce((sum, o) => sum + o.completedQuantity, 0),
+      }
+      const newState = { ...state, mrpState: newMrp }
+      sessions.set(sessionId, newState)
+      res.json({ success: true, data: { gameState: newState } })
+    } catch (err) {
+      res.status(400).json({ success: false, error: String(err) })
+    }
   })
 
   // ── GET /api/game/week-result/:sessionId ── 週次結果

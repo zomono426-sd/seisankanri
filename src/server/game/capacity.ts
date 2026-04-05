@@ -129,23 +129,14 @@ export function reduceLineCapacity(
   )
 }
 
-// --- 生産引当: ラインの日産能力を受注に分配 ---
-const PRIORITY_RANK: Record<ProductionOrder['priority'], number> = {
-  urgent: 0,
-  high: 1,
-  normal: 2,
-}
-
-export function allocateLineProduction(
+// --- 生産: ラインの日産能力をラインストックに蓄積 ---
+export function produceLineStock(
   lines: ProductionLine[],
-  orders: ProductionOrder[],
-  currentDay: number
-): { updatedOrders: ProductionOrder[]; dailyProduced: number } {
-  const ordersCopy = orders.map(o => ({ ...o }))
+  currentStock: Record<string, number>
+): { updatedStock: Record<string, number>; dailyProduced: number } {
+  const stock = { ...currentStock }
   let totalProduced = 0
-
   for (const line of lines) {
-    // 実効日産能力
     let effective = 0
     if (line.status === 'running') {
       effective = Math.floor(line.capacity * (line.assignedWorkers / line.maxWorkers))
@@ -153,41 +144,47 @@ export function allocateLineProduction(
       effective = Math.floor(line.capacity * 0.5)
     }
     // down / maintenance → 0
-
-    if (effective <= 0) continue
-
-    // このラインの未完了受注を優先度・納期順にソート
-    const lineOrders = ordersCopy
-      .filter(o => o.line === line.name && o.completedQuantity < o.quantity)
-      .sort((a, b) => {
-        const pDiff = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]
-        if (pDiff !== 0) return pDiff
-        return a.dueDay - b.dueDay
-      })
-
-    // 能力を1台ずつ振り分け
-    let remaining = effective
-    for (const order of lineOrders) {
-      if (remaining <= 0) break
-      const canProduce = Math.min(remaining, order.quantity - order.completedQuantity)
-      order.completedQuantity += canProduce
-      remaining -= canProduce
-      totalProduced += canProduce
+    if (effective > 0) {
+      stock[line.name] = (stock[line.name] ?? 0) + effective
+      totalProduced += effective
     }
   }
+  return { updatedStock: stock, dailyProduced: totalProduced }
+}
 
-  // ステータス更新
-  for (const order of ordersCopy) {
-    if (order.completedQuantity >= order.quantity) {
-      order.status = 'completed'
-    } else if (currentDay > order.dueDay && order.completedQuantity < order.quantity) {
-      order.status = 'delayed'
-    } else if (order.completedQuantity > 0) {
-      order.status = 'in_progress'
-    }
+// --- 手動引当: ユーザーがラインストックを受注に割り当て ---
+export function allocateToOrder(
+  orders: ProductionOrder[],
+  lineStock: Record<string, number>,
+  orderNo: string,
+  quantity: number,
+  currentWeek: number,
+  currentDay: number
+): { updatedOrders: ProductionOrder[]; updatedStock: Record<string, number> } {
+  const order = orders.find(o => o.orderNo === orderNo)
+  if (!order) throw new Error('Order not found')
+
+  const available = lineStock[order.line] ?? 0
+  const remaining = order.quantity - order.completedQuantity
+  const actual = Math.min(quantity, available, remaining)
+  if (actual <= 0) throw new Error('No stock available or order already complete')
+
+  const updatedOrders = orders.map(o => {
+    if (o.orderNo !== orderNo) return o
+    const newCompleted = o.completedQuantity + actual
+    const absoluteDue = (o.dueWeek - 1) * 5 + o.dueDay
+    const absoluteNow = (currentWeek - 1) * 5 + currentDay
+    let newStatus: ProductionOrder['status'] = 'in_progress'
+    if (newCompleted >= o.quantity) newStatus = 'completed'
+    else if (absoluteNow > absoluteDue) newStatus = 'delayed'
+    return { ...o, completedQuantity: newCompleted, status: newStatus }
+  })
+
+  const updatedStockMap = {
+    ...lineStock,
+    [order.line]: available - actual,
   }
-
-  return { updatedOrders: ordersCopy, dailyProduced: totalProduced }
+  return { updatedOrders, updatedStock: updatedStockMap }
 }
 
 // 日次のリセット（翌日になったら欠勤リセット等は行わない — 継続影響）

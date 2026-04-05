@@ -144,6 +144,22 @@ export function useGameState() {
     [sessionId, isProcessing]
   )
 
+  const allocateOrder = useCallback(
+    async (orderNo: string, quantity: number) => {
+      if (!sessionId || isProcessing) return
+      setIsProcessing(true)
+      try {
+        const result = await api.allocateOrder({ sessionId, orderNo, quantity })
+        setGameState(result.gameState)
+      } catch (err) {
+        setError(String(err))
+      } finally {
+        setIsProcessing(false)
+      }
+    },
+    [sessionId, isProcessing]
+  )
+
   const resetGame = useCallback(() => {
     setPhase('title')
     setGameState(null)
@@ -171,6 +187,7 @@ export function useGameState() {
     continueToNextWeek,
     investigate,
     negotiate,
+    allocateOrder,
     resetGame,
   }
 }

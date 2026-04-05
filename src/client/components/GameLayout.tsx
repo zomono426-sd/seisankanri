@@ -13,6 +13,7 @@ interface GameLayoutProps {
   onAction: (event: GameEvent, choice: EventChoice) => void
   onInvestigate: (eventId: string, choiceId: string) => void
   onAdvanceDay: () => void
+  onAllocateOrder: (orderNo: string, quantity: number) => void
 }
 
 function getDayName(day: number): string {
@@ -28,6 +29,7 @@ export function GameLayout({
   onAction,
   onInvestigate,
   onAdvanceDay,
+  onAllocateOrder,
 }: GameLayoutProps) {
   return (
     <div className="h-screen bg-factory-bg text-factory-text flex flex-col overflow-hidden">
@@ -83,7 +85,7 @@ export function GameLayout({
         <main className="flex-1 flex flex-col overflow-hidden p-3 gap-3">
           {/* モニタリングダッシュボード */}
           <div className="flex-1 overflow-hidden">
-            <MonitoringDashboard gameState={gameState} />
+            <MonitoringDashboard gameState={gameState} onAllocateOrder={onAllocateOrder} />
           </div>
 
           {/* 意思決定パネル（下部） */}

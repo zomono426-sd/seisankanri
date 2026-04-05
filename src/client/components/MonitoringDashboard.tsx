@@ -2,6 +2,7 @@ import type { GameState, ProductionOrder, InventoryItem } from '../../shared/typ
 
 interface Props {
   gameState: GameState
+  onAllocateOrder: (orderNo: string, quantity: number) => void
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -48,15 +49,25 @@ function PriorityBadge({ priority }: { priority: string }) {
 
 const DAY_NAMES = ['月', '火', '水', '木', '金']
 
-function DeadlineIndicator({ dueDay, currentDay, status }: { dueDay: number; currentDay: number; status: string }) {
-  const remaining = dueDay - currentDay
-  const isCompleted = status === 'completed'
+function toAbsoluteDay(week: number, day: number): number {
+  return (week - 1) * 5 + day
+}
+
+function DeadlineIndicator({ order, currentWeek, currentDay }: {
+  order: ProductionOrder
+  currentWeek: number
+  currentDay: number
+}) {
+  const absoluteNow = toAbsoluteDay(currentWeek, currentDay)
+  const absoluteDue = toAbsoluteDay(order.dueWeek, order.dueDay)
+  const remaining = absoluteDue - absoluteNow
+  const isCompleted = order.status === 'completed'
 
   if (isCompleted) {
     return <span className="text-xs text-green-400">完了</span>
   }
 
-  if (remaining < 0 || status === 'delayed') {
+  if (remaining < 0 || order.status === 'delayed') {
     return (
       <span className="text-xs text-red-400 font-bold animate-pulse">
         遅延 {Math.abs(remaining)}日超過
@@ -71,34 +82,9 @@ function DeadlineIndicator({ dueDay, currentDay, status }: { dueDay: number; cur
     )
   }
   return (
-    <span className={`text-xs ${remaining <= 1 ? 'text-yellow-400' : 'text-factory-muted'}`}>
+    <span className={`text-xs ${remaining <= 2 ? 'text-yellow-400' : 'text-factory-muted'}`}>
       残り{remaining}日
     </span>
-  )
-}
-
-function DeadlineTimeline({ dueDay, currentDay }: { dueDay: number; currentDay: number }) {
-  return (
-    <div className="flex gap-0.5 mt-1">
-      {DAY_NAMES.map((name, i) => {
-        const day = i + 1
-        const isDue = day === dueDay
-        const isPast = day < currentDay
-        const isCurrent = day === currentDay
-        return (
-          <div
-            key={day}
-            className={`flex-1 h-1.5 rounded-sm ${
-              isDue ? 'bg-red-500' :
-              isCurrent ? 'bg-factory-amber' :
-              isPast ? 'bg-factory-border' :
-              'bg-factory-border/50'
-            }`}
-            title={`${name}曜${isDue ? ' (納期)' : ''}${isCurrent ? ' (今日)' : ''}`}
-          />
-        )
-      })}
-    </div>
   )
 }
 
@@ -118,19 +104,32 @@ function InventoryLink({ inventory }: { inventory: InventoryItem | undefined }) 
 
 function OrderCard({
   order,
+  currentWeek,
   currentDay,
   linkedInventory,
   lineStatus,
+  availableStock,
+  onAllocate,
 }: {
   order: ProductionOrder
+  currentWeek: number
   currentDay: number
   linkedInventory: InventoryItem | undefined
   lineStatus: string
+  availableStock: number
+  onAllocate: (orderNo: string, quantity: number) => void
 }) {
-  const remaining = order.dueDay - currentDay
+  const absoluteNow = toAbsoluteDay(currentWeek, currentDay)
+  const absoluteDue = toAbsoluteDay(order.dueWeek, order.dueDay)
+  const remaining = absoluteDue - absoluteNow
   const isUrgent = order.priority === 'urgent'
   const isOverdue = remaining < 0 || order.status === 'delayed'
   const progressPct = order.quantity > 0 ? (order.completedQuantity / order.quantity) * 100 : 0
+  const isCompleted = order.status === 'completed'
+
+  const orderRemaining = order.quantity - order.completedQuantity
+  const allocatable = Math.min(availableStock, orderRemaining)
+  const canAllocate = !isCompleted && allocatable > 0
 
   const borderClass = isUrgent
     ? 'border-red-500/60 shadow-[0_0_8px_rgba(239,68,68,0.2)]'
@@ -163,14 +162,15 @@ function OrderCard({
       {/* Deadline */}
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-1.5">
-          <span className="text-xs text-factory-muted">納期: {DAY_NAMES[order.dueDay - 1]}曜</span>
-          <DeadlineIndicator dueDay={order.dueDay} currentDay={currentDay} status={order.status} />
+          <span className="text-xs text-factory-muted">
+            納期: W{order.dueWeek} {DAY_NAMES[order.dueDay - 1]}曜
+          </span>
+          <DeadlineIndicator order={order} currentWeek={currentWeek} currentDay={currentDay} />
         </div>
       </div>
-      <DeadlineTimeline dueDay={order.dueDay} currentDay={currentDay} />
 
       {/* Progress bar */}
-      <div className="mt-2 mb-1.5">
+      <div className="mt-1.5 mb-1.5">
         <div className="flex justify-between text-xs mb-0.5">
           <span className="text-factory-muted">進捗</span>
           <span className="text-factory-text font-mono">{order.completedQuantity}/{order.quantity}台</span>
@@ -204,24 +204,47 @@ function OrderCard({
           <InventoryLink inventory={linkedInventory} />
         </div>
       )}
+
+      {/* Allocation button */}
+      {!isCompleted && (
+        <div className="mt-1.5 pt-1.5 border-t border-factory-border/30">
+          <button
+            onClick={() => onAllocate(order.orderNo, allocatable)}
+            disabled={!canAllocate}
+            className={`w-full text-xs py-1 px-2 rounded font-bold transition-all ${
+              canAllocate
+                ? 'bg-factory-amber/20 text-factory-amber border border-factory-amber/40 hover:bg-factory-amber/30 cursor-pointer'
+                : 'bg-factory-border/30 text-factory-muted border border-factory-border/30 cursor-not-allowed'
+            }`}
+          >
+            {canAllocate
+              ? `引当 (${allocatable}台)`
+              : '在庫なし'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
 
-export function MonitoringDashboard({ gameState }: Props) {
-  const { productionLines, mrpState, departments, workCapacity, currentDay, suppliers } = gameState
+export function MonitoringDashboard({ gameState, onAllocateOrder }: Props) {
+  const { productionLines, mrpState, departments, workCapacity, currentDay, currentWeek, suppliers } = gameState
 
-  // Sort orders: urgent first, then by dueDay
+  // Sort orders: urgent first, then by absolute due date
   const priorityOrder: Record<string, number> = { urgent: 0, high: 1, normal: 2 }
   const sortedOrders = [...mrpState.productionOrders].sort(
-    (a, b) => (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2) || a.dueDay - b.dueDay
+    (a, b) =>
+      (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2) ||
+      toAbsoluteDay(a.dueWeek, a.dueDay) - toAbsoluteDay(b.dueWeek, b.dueDay)
   )
 
   // Weekly progress
   const weeklyPct = mrpState.weeklyPlanned > 0
     ? (mrpState.weeklyCompleted / mrpState.weeklyPlanned) * 100
     : 0
-  const expectedPct = (currentDay / 5) * 100
+  // Expected progress based on elapsed days out of 20
+  const elapsedDays = toAbsoluteDay(currentWeek, currentDay)
+  const expectedPct = (elapsedDays / 20) * 100
   const isBehind = weeklyPct < expectedPct - 10
 
   // Build line status lookup
@@ -245,6 +268,9 @@ export function MonitoringDashboard({ gameState }: Props) {
   // Count critical inventory items
   const criticalInventory = mrpState.inventory.filter(i => i.free <= i.safetyStock)
 
+  // Line stock
+  const lineStock = mrpState.lineStock ?? {}
+
   return (
     <div className="flex flex-col gap-2 h-full overflow-y-auto">
 
@@ -252,7 +278,7 @@ export function MonitoringDashboard({ gameState }: Props) {
       <div className="bg-factory-panel border border-factory-border rounded-lg p-3 flex-shrink-0">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-xs text-factory-amber uppercase tracking-wider font-bold">
-            週次生産計画
+            月次生産計画
           </h3>
           <div className="flex items-center gap-3">
             <span className={`text-2xl font-mono font-bold ${isBehind ? 'text-red-400' : 'text-factory-amber'}`}>
@@ -278,20 +304,19 @@ export function MonitoringDashboard({ gameState }: Props) {
           />
         </div>
 
-        {/* Day timeline */}
+        {/* Week timeline */}
         <div className="flex gap-1">
-          {DAY_NAMES.map((name, i) => {
-            const day = i + 1
-            const isCurrent = day === currentDay
-            const isPast = day < currentDay
+          {[1, 2, 3, 4].map(week => {
+            const isCurrent = week === currentWeek
+            const isPast = week < currentWeek
             return (
-              <div key={day} className="flex-1 text-center">
+              <div key={week} className="flex-1 text-center">
                 <div className={`text-[10px] font-mono ${
                   isCurrent ? 'text-factory-amber font-bold' :
                   isPast ? 'text-factory-muted' :
                   'text-factory-muted/50'
                 }`}>
-                  {name}
+                  W{week}
                 </div>
                 <div className={`h-1 rounded-full mt-0.5 ${
                   isCurrent ? 'bg-factory-amber' :
@@ -327,9 +352,12 @@ export function MonitoringDashboard({ gameState }: Props) {
             <OrderCard
               key={order.orderNo}
               order={order}
+              currentWeek={currentWeek}
               currentDay={currentDay}
               linkedInventory={inventoryMap[order.partNo]}
               lineStatus={lineStatusMap[order.line] ?? 'running'}
+              availableStock={lineStock[order.line] ?? 0}
+              onAllocate={onAllocateOrder}
             />
           ))}
         </div>
@@ -366,6 +394,11 @@ export function MonitoringDashboard({ gameState }: Props) {
                 </div>
                 <span className="text-[10px] text-factory-muted flex-shrink-0">
                   {line.currentLoad}/{line.capacity}
+                </span>
+                <span className={`text-[10px] font-bold flex-shrink-0 ${
+                  (lineStock[line.name] ?? 0) > 0 ? 'text-factory-amber' : 'text-factory-muted'
+                }`}>
+                  在庫:{lineStock[line.name] ?? 0}
                 </span>
               </div>
             ))}

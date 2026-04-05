@@ -183,7 +183,8 @@ export interface ProductionOrder {
   partName: string
   customerName: string
   quantity: number
-  dueDay: number               // 納期（何日目）
+  dueWeek: number              // 納期の週（1-4）
+  dueDay: number               // 納期の日（1-5、dueWeek内の曜日）
   completedQuantity: number
   status: 'planned' | 'in_progress' | 'completed' | 'delayed' | 'blocked'
   line: string
@@ -203,8 +204,9 @@ export interface InventoryItem {
 export interface MrpState {
   productionOrders: ProductionOrder[]
   inventory: InventoryItem[]
-  weeklyPlanned: number        // 週の計画台数
-  weeklyCompleted: number      // 週の完了台数
+  lineStock: Record<string, number>  // ライン名 → 利用可能在庫数
+  weeklyPlanned: number        // 全受注の計画台数合計
+  weeklyCompleted: number      // 全受注の完了台数合計
 }
 
 // --- イベントストリームアイテム ---
