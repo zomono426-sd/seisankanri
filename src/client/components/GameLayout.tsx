@@ -15,6 +15,12 @@ interface GameLayoutProps {
   onAdvanceDay: () => void
   onStartAssembly: (orderNo: string) => void
   onUpdateProductionPlan: (plans: LineProductionPlan[]) => void
+  lastAssemblyResult: {
+    orderNo: string
+    started: boolean
+    missingParts?: Array<{ partNo: string; partName: string; required: number; available: number }>
+    message: string
+  } | null
 }
 
 function getDayName(day: number): string {
@@ -32,6 +38,7 @@ export function GameLayout({
   onAdvanceDay,
   onStartAssembly,
   onUpdateProductionPlan,
+  lastAssemblyResult,
 }: GameLayoutProps) {
   return (
     <div className="h-screen bg-factory-bg text-factory-text flex flex-col overflow-hidden">
@@ -87,7 +94,7 @@ export function GameLayout({
         <main className="flex-1 flex flex-col overflow-hidden p-3 gap-3">
           {/* モニタリングダッシュボード */}
           <div className="flex-1 overflow-hidden">
-            <MonitoringDashboard gameState={gameState} onStartAssembly={onStartAssembly} onUpdateProductionPlan={onUpdateProductionPlan} />
+            <MonitoringDashboard gameState={gameState} onStartAssembly={onStartAssembly} onUpdateProductionPlan={onUpdateProductionPlan} lastAssemblyResult={lastAssemblyResult} />
           </div>
 
           {/* 意思決定パネル（下部） */}

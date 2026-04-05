@@ -181,6 +181,7 @@ export default function App() {
     investigate,
     startAssembly,
     updateProductionPlan,
+    lastAssemblyResult,
     resetGame,
   } = useGameState()
 
@@ -224,6 +225,7 @@ export default function App() {
         onAdvanceDay={advanceDay}
         onStartAssembly={startAssembly}
         onUpdateProductionPlan={updateProductionPlan}
+        lastAssemblyResult={lastAssemblyResult}
       />
     )
   }
