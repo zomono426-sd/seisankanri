@@ -2,7 +2,7 @@ import type { GameGraphState } from '../state.js'
 import { scheduleWeeklyEvents, getEventsForDay } from '../../game/events.js'
 import { generateDirective } from '../../game/director.js'
 import { evaluateWeekly } from '../../game/scoring.js'
-import { dailyCapacityUpdate } from '../../game/capacity.js'
+import { dailyCapacityUpdate, allocateLineProduction } from '../../game/capacity.js'
 import { randomUUID } from 'crypto'
 import type { EventStreamItem, GameState } from '../../../shared/types.js'
 
@@ -21,14 +21,16 @@ export async function timeAdvanceNode(
   const { lines: updatedLines, capacity: updatedCapacity } =
     dailyCapacityUpdate(state.productionLines, state.workCapacity)
 
-  // MRP進捗: 日毎に生産進捗を少し進める
-  const dailyProgress = Math.floor(Math.random() * 2) + 1
+  // MRP進捗: ラインの日産能力を受注に引き当て
+  const { updatedOrders } = allocateLineProduction(
+    updatedLines,
+    state.mrpState.productionOrders,
+    state.currentDay
+  )
   const newMrp = {
     ...state.mrpState,
-    weeklyCompleted: Math.min(
-      state.mrpState.weeklyPlanned,
-      state.mrpState.weeklyCompleted + dailyProgress
-    ),
+    productionOrders: updatedOrders,
+    weeklyCompleted: updatedOrders.reduce((sum, o) => sum + o.completedQuantity, 0),
   }
 
   if (currentDay < 5) {

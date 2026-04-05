@@ -1,4 +1,4 @@
-import type { WorkCapacity, ProductionLine } from '../../shared/types.js'
+import type { WorkCapacity, ProductionLine, ProductionOrder } from '../../shared/types.js'
 
 // ============================================================
 // 作業能力システム — 設備故障・人員欠勤の影響管理
@@ -127,6 +127,67 @@ export function reduceLineCapacity(
   return lines.map(l =>
     l.id === lineId ? { ...l, status: 'reduced' as const } : l
   )
+}
+
+// --- 生産引当: ラインの日産能力を受注に分配 ---
+const PRIORITY_RANK: Record<ProductionOrder['priority'], number> = {
+  urgent: 0,
+  high: 1,
+  normal: 2,
+}
+
+export function allocateLineProduction(
+  lines: ProductionLine[],
+  orders: ProductionOrder[],
+  currentDay: number
+): { updatedOrders: ProductionOrder[]; dailyProduced: number } {
+  const ordersCopy = orders.map(o => ({ ...o }))
+  let totalProduced = 0
+
+  for (const line of lines) {
+    // 実効日産能力
+    let effective = 0
+    if (line.status === 'running') {
+      effective = Math.floor(line.capacity * (line.assignedWorkers / line.maxWorkers))
+    } else if (line.status === 'reduced') {
+      effective = Math.floor(line.capacity * 0.5)
+    }
+    // down / maintenance → 0
+
+    if (effective <= 0) continue
+
+    // このラインの未完了受注を優先度・納期順にソート
+    const lineOrders = ordersCopy
+      .filter(o => o.line === line.name && o.completedQuantity < o.quantity)
+      .sort((a, b) => {
+        const pDiff = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]
+        if (pDiff !== 0) return pDiff
+        return a.dueDay - b.dueDay
+      })
+
+    // 能力を1台ずつ振り分け
+    let remaining = effective
+    for (const order of lineOrders) {
+      if (remaining <= 0) break
+      const canProduce = Math.min(remaining, order.quantity - order.completedQuantity)
+      order.completedQuantity += canProduce
+      remaining -= canProduce
+      totalProduced += canProduce
+    }
+  }
+
+  // ステータス更新
+  for (const order of ordersCopy) {
+    if (order.completedQuantity >= order.quantity) {
+      order.status = 'completed'
+    } else if (currentDay > order.dueDay && order.completedQuantity < order.quantity) {
+      order.status = 'delayed'
+    } else if (order.completedQuantity > 0) {
+      order.status = 'in_progress'
+    }
+  }
+
+  return { updatedOrders: ordersCopy, dailyProduced: totalProduced }
 }
 
 // 日次のリセット（翌日になったら欠勤リセット等は行わない — 継続影響）

@@ -196,13 +196,10 @@ function applyRelDelta(
   return result
 }
 
-function updateMrpProgress(mrpState: GameGraphState['mrpState'], success: boolean) {
-  if (!success) return mrpState
-  const bonus = Math.floor(Math.random() * 2) + 1
-  return {
-    ...mrpState,
-    weeklyCompleted: Math.min(mrpState.weeklyPlanned, mrpState.weeklyCompleted + bonus),
-  }
+function updateMrpProgress(mrpState: GameGraphState['mrpState'], _success: boolean) {
+  // 生産引当はtimeAdvanceNodeで実施。アクション成否はスコア・ライン状態に反映され、
+  // 次日の引当に間接的に影響するため、ここでは変更しない。
+  return mrpState
 }
 
 function buildMiniState(state: GameGraphState): GameState {
