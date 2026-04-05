@@ -1,373 +1,353 @@
 import type { GameEvent } from '../../shared/types.js'
 
-// 時刻変換ユーティリティ (例: "08:30" → 510分)
-function toMinutes(timeStr: string): number {
-  const [h, m] = timeStr.split(':').map(Number)
-  return h * 60 + m
-}
+// ============================================================
+// 週次イベントプール（カテゴリ別）
+// 各週の開始時にプールからランダムに選択・日ごとに配置
+// ============================================================
 
-// MVPイベントカタログ（9件）
-export const EVENT_CATALOG: GameEvent[] = [
-  // E1: 朝一 — 製造職長 谷口 から設備アラーム報告（確定）
+// --- 営業系イベント ---
+const SALES_EVENTS: GameEvent[] = [
   {
-    id: 'E1_equipment_alarm',
-    triggerTime: toMinutes('08:00'),
-    characterId: 'workshop',
-    title: '組立ラインの設備アラーム',
-    description:
-      '朝礼直後、製造職長 谷口から連絡。「第2組立ラインの自動ねじ締め機がアラームを吐いてます。今日の製造指示MO-2024-089（搬送ユニット×3台）に影響が出るかもしれません。修理業者の手配か、手作業への切り替えか判断が必要です。」',
-    severity: 'high',
-    isProbabilistic: false,
-    triggerProbability: 1.0,
-    isChainEvent: false,
-    choices: [
-      {
-        id: 'self_fix',
-        label: '自分で修理業者を手配する',
-        actionType: 'self',
-        timeConsumption: 45,
-        context: '修理業者に直接連絡し、今日中に来てもらえるか確認する。コストが発生するが確実。',
-      },
-      {
-        id: 'dispatch_tanaka',
-        label: '田中に業者手配を任せる',
-        actionType: 'dispatch',
-        dispatchTarget: 'subordinate1',
-        timeConsumption: 15,
-        context: '田中に修理業者への連絡と手配を任せる。',
-      },
-      {
-        id: 'dispatch_sasaki',
-        label: '佐々木に手作業切替の調整を任せる',
-        actionType: 'dispatch',
-        dispatchTarget: 'subordinate2',
-        timeConsumption: 15,
-        context: '佐々木に谷口職長と相談して手作業への切替ライン調整を任せる。',
-      },
-      {
-        id: 'defer',
-        label: '谷口に様子見させて保留にする',
-        actionType: 'defer',
-        timeConsumption: 5,
-        context: '「少し様子を見て」と伝えて保留にする。リスクが蓄積する。',
-      },
-    ],
-  },
-
-  // E2: 08:30 — 調達担当 木村 から部品入荷遅れ警告（確率70%）
-  {
-    id: 'E2_parts_delay',
-    triggerTime: toMinutes('08:30'),
-    characterId: 'procurement',
-    title: '重要部品の入荷遅れ警告',
-    description:
-      '調達担当 木村から連絡。「MO-2024-091に使うACサーボモーター（品番SV-3000）ですが、仕入先の大東電機から今朝連絡が来て、今日予定だった納入が明日以降になりそうです。フリー在庫は0台。このまま行くと14:00以降の組立工程が止まります。代替品手配か工程順序変更か検討が必要です。」',
-    severity: 'high',
-    isProbabilistic: true,
-    triggerProbability: 0.7,
-    isChainEvent: false,
-    choices: [
-      {
-        id: 'self_alternative',
-        label: '自分で代替仕入先を探す',
-        actionType: 'self',
-        timeConsumption: 60,
-        context: '木村と一緒に代替仕入先を探す。確実だが時間がかかる。',
-      },
-      {
-        id: 'dispatch_wood_change',
-        label: '木村に代替手配を一任する',
-        actionType: 'dispatch',
-        dispatchTarget: 'procurement',
-        timeConsumption: 10,
-        context: '木村に代替仕入先の選定と発注を一任する。',
-      },
-      {
-        id: 'reschedule',
-        label: '工程順序を入れ替えて対応する',
-        actionType: 'self',
-        timeConsumption: 30,
-        context: '谷口職長と相談してMO-2024-091を後回しにし、他の指示を先行させる。',
-      },
-      {
-        id: 'defer_e2',
-        label: 'まず状況確認だけして保留にする',
-        actionType: 'defer',
-        timeConsumption: 5,
-        context: '「対処法を検討する」と言いながら後回しにする。',
-      },
-    ],
-  },
-
-  // E3: 09:00 — 営業主任 西村 から仕様変更依頼（確定）
-  {
-    id: 'E3_spec_change',
-    triggerTime: toMinutes('09:00'),
+    id: 'S1_rush_order',
+    category: 'sales',
     characterId: 'sales',
-    title: '顧客からの仕様変更依頼',
-    description:
-      '営業主任 西村から連絡。「関東精機の関口さんから昨日電話があって、MO-2024-088の制御盤カラーをRAL7035（ライトグレー）からRAL9005（ジェットブラック）に変えてほしいと。あ、今日組立開始予定のやつです。「御社の対応範囲内ですよね？」って言われて、「はい大丈夫です」って答えちゃいました。あとはよろしくです。」',
-    severity: 'critical',
-    isProbabilistic: false,
-    triggerProbability: 1.0,
-    isChainEvent: false,
-    choices: [
-      {
-        id: 'accept_change',
-        label: '受け入れて現場に指示変更を出す',
-        actionType: 'self',
-        timeConsumption: 40,
-        context: '仕様変更を受け入れ、資材発注変更と谷口職長への工程変更指示を出す。コストと時間がかかる。',
-      },
-      {
-        id: 'negotiate_delay',
-        label: '西村を通じて顧客に納期変更を交渉する',
-        actionType: 'dispatch',
-        dispatchTarget: 'sales',
-        timeConsumption: 20,
-        context: '仕様変更による工程影響を説明し、納期延期を顧客に認めてもらうよう西村に交渉させる。',
-      },
-      {
-        id: 'dispatch_confirm',
-        label: '田中に現場影響調査を任せる',
-        actionType: 'dispatch',
-        dispatchTarget: 'subordinate1',
-        timeConsumption: 15,
-        context: 'まず田中に現場の影響範囲を調べさせてから判断する。時間を少し稼ぐ。',
-      },
-      {
-        id: 'reject_change',
-        label: '仕様変更を断り現状仕様で進める',
-        actionType: 'self',
-        timeConsumption: 25,
-        context: '「今の段階では工程変更は無理」と西村に伝え、顧客説得をさせる。顧客満足度に影響。',
-      },
-    ],
-  },
-
-  // E4: 10:30 — 連鎖イベント（E1/E2/E3の判断結果による）
-  {
-    id: 'E4_chain_crisis',
-    triggerTime: toMinutes('10:30'),
-    characterId: 'workshop',
-    title: '複合問題が発生（連鎖）',
-    description:
-      '製造職長 谷口から緊急連絡。「松田さん、第2ラインはまだ直ってません。それに部品も届いてない。今の状態だと今日の出荷台数、半分も行けないかもしれません。どうしますか？」',
-    severity: 'critical',
-    isProbabilistic: false,
-    triggerProbability: 1.0,
-    isChainEvent: true,
-    chainCondition: 'deferred',
-    choices: [
-      {
-        id: 'emergency_response',
-        label: '残業体制を組んで挽回する',
-        actionType: 'self',
-        timeConsumption: 30,
-        context: '今日の残業を承認し、ライン最優先で挽回体制を組む。コストが上がる。',
-      },
-      {
-        id: 'prioritize_orders',
-        label: '出荷優先順位を組み直す',
-        actionType: 'self',
-        timeConsumption: 45,
-        context: '出荷優先度を顧客重要度・納期順に並べ直す。一部案件は遅延を認める。',
-      },
-      {
-        id: 'dispatch_sasaki_resolve',
-        label: '佐々木に対応指揮を任せる',
-        actionType: 'dispatch',
-        dispatchTarget: 'subordinate2',
-        timeConsumption: 10,
-        context: '佐々木に現場対応の指揮を任せる。独断リスクあり。',
-      },
-      {
-        id: 'defer_e4',
-        label: 'まだ様子を見る',
-        actionType: 'defer',
-        timeConsumption: 5,
-        context: '判断を先延ばしにする。状況は悪化し続ける。',
-      },
-    ],
-  },
-
-  // E5: 13:00 — 中間デッドライン判定（システム、確定）
-  {
-    id: 'E5_midday_deadline',
-    triggerTime: toMinutes('13:00'),
-    characterId: 'system',
-    title: '中間デッドライン判定',
-    description:
-      '【システム通知】13:00 中間デッドライン。今日の出荷計画に対する午前の進捗を確認します。現在のMRP実績を評価します。',
-    severity: 'medium',
-    isProbabilistic: false,
-    triggerProbability: 1.0,
-    isChainEvent: false,
-    choices: [
-      {
-        id: 'check_status',
-        label: '進捗を確認して午後の計画を立て直す',
-        actionType: 'self',
-        timeConsumption: 20,
-        context: '現在の進捗を確認し、午後の対応方針を整理する。',
-      },
-      {
-        id: 'emergency_meeting',
-        label: '関係者を集めて緊急ミーティングを開く',
-        actionType: 'self',
-        timeConsumption: 30,
-        context: '谷口職長・木村を呼んで今後の方針を共有する。時間はかかるが情報共有効果あり。',
-      },
-    ],
-  },
-
-  // E6: 14:00 — 外注先社長 坂本 から外注品の品質問題（確率50%）
-  {
-    id: 'E6_quality_issue',
-    triggerTime: toMinutes('14:00'),
-    characterId: 'subcontractor',
-    title: '外注品の品質問題発覚',
-    description:
-      '外注先社長 坂本から電話。「松田さん、今朝お届けした溶接フレーム10台ですが、うち2台に溶接ビードの寸法不良が見つかりまして。私どもの確認ミスでした。交換品は今週末に対応できますが、今日使う分は…うちのことも考えてくださいよ、でも可能な限り対処します。」品証担当 長谷川への確認と、今後の対応判断が必要。',
+    title: '特急注文の飛び込み',
+    description: '営業主任 西村から連絡。「大口顧客の関東精機から特急注文が入りました。今週中に搬送ユニット3台追加できないかって。"御社なら対応してくれると思って"だそうです。あとはよろしくです。」',
     severity: 'high',
-    isProbabilistic: true,
+    triggerDay: 1,
+    triggerProbability: 0.7,
+    affectedDepartment: 'sales',
+    choices: [
+      { id: 'accept_rush', label: '受注して製造計画を組み直す', actionType: 'self', timeCost: 'half_day', context: '現場に追加負荷がかかるが、顧客満足度UP。コスト管理に影響。' },
+      { id: 'negotiate_deadline', label: '西村に納期交渉を指示する', actionType: 'dispatch', dispatchTarget: 'sales', timeCost: 'none', context: '来週納品で交渉させる。顧客満足度が少し下がるかも。' },
+      { id: 'reject_rush', label: '今週は対応不可と断る', actionType: 'self', timeCost: 'none', context: 'キャパオーバーを理由に断る。顧客満足度に大きく影響。' },
+    ],
+  },
+  {
+    id: 'S2_spec_change',
+    category: 'sales',
+    characterId: 'sales',
+    title: '仕様変更依頼',
+    description: '営業主任 西村から連絡。「関東精機の関口さんから、制御盤の仕様を変えてほしいと。塗装色変更と配線ルート変更です。"できますよね？"って答えちゃいました。」',
+    severity: 'critical',
+    triggerDay: 2,
+    triggerProbability: 0.8,
+    affectedDepartment: 'sales',
+    choices: [
+      { id: 'accept_spec', label: '受け入れて現場に指示変更を出す', actionType: 'self', timeCost: 'half_day', context: '仕様変更を受け入れ、資材発注変更と工程変更指示。コストと時間がかかる。' },
+      { id: 'investigate_spec', label: 'AI影響調査を実施する', actionType: 'investigate', timeCost: 'half_day', context: 'AIエージェントに影響範囲を分析させてから判断。' },
+      { id: 'delegate_confirm', label: '田中に現場影響調査を任せる', actionType: 'dispatch', dispatchTarget: 'subordinate1', timeCost: 'none', context: '田中に影響範囲を調べさせて時間を稼ぐ。' },
+      { id: 'reject_spec', label: '仕様変更を断る', actionType: 'self', timeCost: 'none', context: '工程上無理と伝える。顧客満足度に大きく影響。' },
+    ],
+  },
+  {
+    id: 'S3_customer_complaint',
+    category: 'sales',
+    characterId: 'sales',
+    title: '顧客クレーム対応',
+    description: '営業主任 西村が青い顔で来た。「先週出荷した搬送ユニット、お客様から"動作が不安定"ってクレームが来ました。至急対応しないと取引に影響しそうです。」',
+    severity: 'critical',
+    triggerDay: 3,
     triggerProbability: 0.5,
-    isChainEvent: false,
+    affectedDepartment: 'sales',
     choices: [
-      {
-        id: 'accept_partial',
-        label: '良品8台で工程を続行し、不良2台は後日対応',
-        actionType: 'self',
-        timeConsumption: 25,
-        context: '今日使える8台で工程を進め、不良品は坂本に交換してもらう。品質記録が残る。',
-      },
-      {
-        id: 'urgent_replacement',
-        label: '坂本に今日中の交換品を強く要求する',
-        actionType: 'self',
-        timeConsumption: 30,
-        context: '今日中に交換品を持ってくるよう強く要求する。関係値への影響あり。',
-      },
-      {
-        id: 'dispatch_tanaka_qa',
-        label: '田中に品証担当 長谷川への確認を任せる',
-        actionType: 'dispatch',
-        dispatchTarget: 'subordinate1',
-        timeConsumption: 10,
-        context: '田中を通じて品証担当 長谷川に今日の対応可否を確認させる。',
-      },
-      {
-        id: 'defer_e6',
-        label: '品証に回して今日は様子を見る',
-        actionType: 'defer',
-        timeConsumption: 5,
-        context: '品証担当 長谷川に任せて判断を先送りする。',
-      },
+      { id: 'self_handle_complaint', label: '自分で顧客対応を主導する', actionType: 'self', timeCost: 'full_day', context: '直接対応で信頼回復。ただし1日潰れる。' },
+      { id: 'dispatch_sasaki_complaint', label: '佐々木に現地調査を任せる', actionType: 'dispatch', dispatchTarget: 'subordinate2', timeCost: 'none', context: '佐々木の経験を活かす。独自判断のリスクあり。' },
+      { id: 'defer_complaint', label: '来週対応に回す', actionType: 'defer', timeCost: 'none', context: '先送り。顧客満足度が大きく下がる。' },
     ],
   },
-
-  // E7: 15:30 — 製造部長 橋本 からコスト・残業プレッシャー（確率30%）
   {
-    id: 'E7_cost_pressure',
-    triggerTime: toMinutes('15:30'),
-    characterId: 'dept_manager',
-    title: 'コスト超過・残業費プレッシャー',
-    description:
-      '製造部長 橋本が突然席に来た。「松田くん、今月の残業費と外注費なんだけど、すでに月予算の80%を使い切ってるって経理から言われた。で、コストへの影響は？今日の進捗はどうなってるの？」',
-    severity: 'high',
-    isProbabilistic: true,
-    triggerProbability: 0.3,
-    isChainEvent: false,
+    id: 'S4_new_inquiry',
+    category: 'sales',
+    characterId: 'sales',
+    title: '大型案件の引き合い',
+    description: '営業主任 西村が嬉しそうに来た。「新規顧客から大型案件の引き合いが来ました！来月から月20台ペースで。今週中に生産能力の回答が必要です。」',
+    severity: 'medium',
+    triggerDay: 4,
+    triggerProbability: 0.4,
+    affectedDepartment: 'sales',
     choices: [
-      {
-        id: 'report_honestly',
-        label: '現状を正直に報告して理解を求める',
-        actionType: 'self',
-        timeConsumption: 20,
-        context: '現在の状況を正直に説明し、対策案とセットで報告する。',
-      },
-      {
-        id: 'minimize_overtime',
-        label: '残業を最小化する方針に切り替える',
-        actionType: 'self',
-        timeConsumption: 15,
-        context: '残業を最小限にする方針を即決して橋本に報告。一部出荷が翌日以降にずれる可能性。',
-      },
-      {
-        id: 'delay_answer',
-        label: '「確認して折り返します」と言って時間を稼ぐ',
-        actionType: 'defer',
-        timeConsumption: 5,
-        context: '即答を避けてデータを整理してから報告する。',
-      },
-    ],
-  },
-
-  // E8: 16:30 — 最終デッドライン判定（システム、確定）
-  {
-    id: 'E8_final_deadline',
-    triggerTime: toMinutes('16:30'),
-    characterId: 'system',
-    title: '最終デッドライン判定',
-    description:
-      '【システム通知】16:30 最終デッドライン。今日の出荷予定案件の最終確認。未解決案件の締切です。今日中に完了できないものは遅延確定となります。',
-    severity: 'critical',
-    isProbabilistic: false,
-    triggerProbability: 1.0,
-    isChainEvent: false,
-    choices: [
-      {
-        id: 'finalize_shipping',
-        label: '完了した案件を出荷確定させる',
-        actionType: 'self',
-        timeConsumption: 15,
-        context: '今日完了した案件を確定させ、未完了は翌日繰越の記録をつける。',
-      },
-      {
-        id: 'all_hands',
-        label: '全員残業で最後の追い込みをかける',
-        actionType: 'self',
-        timeConsumption: 20,
-        context: '全員に残業指示を出して最大限の台数を今日中に完成させる。コスト増加。',
-      },
-    ],
-  },
-
-  // E9: ランダム — 工場長 村上 の登場（重大局面、確率5%）
-  {
-    id: 'E9_factory_manager',
-    triggerTime: toMinutes('14:30'),
-    characterId: 'factory_manager',
-    title: '工場長 村上 が現れた',
-    description:
-      '工場長 村上が生産管理エリアに突然現れた。「松田くん、今日の状況を聞いた。言い訳はいい、どうするんだ。」重大な局面であることを工場全体が感じている。',
-    severity: 'critical',
-    isProbabilistic: true,
-    triggerProbability: 0.05,
-    isChainEvent: false,
-    choices: [
-      {
-        id: 'show_plan',
-        label: '対策計画を説明して信頼を得る',
-        actionType: 'self',
-        timeConsumption: 15,
-        context: '現状と具体的な回復プランを説明する。工場長の信頼を得られれば強力なサポートが得られる。',
-      },
-      {
-        id: 'request_support',
-        label: '工場長にリソース支援を要請する',
-        actionType: 'self',
-        timeConsumption: 10,
-        context: '現場増員や設備優先使用の権限を工場長に直接要請する。',
-      },
+      { id: 'capacity_study', label: '生産能力を精査して回答する', actionType: 'self', timeCost: 'half_day', context: '現実的な能力を計算して回答。信頼性が高い。' },
+      { id: 'optimistic_reply', label: '前向きに受注する方向で回答', actionType: 'self', timeCost: 'none', context: '営業を喜ばせるが、実現可能性にリスク。' },
+      { id: 'defer_inquiry', label: '来週回答すると伝える', actionType: 'defer', timeCost: 'none', context: '判断を先送り。機会損失の可能性。' },
     ],
   },
 ]
 
-// トリガー時刻でイベントをスケジュール（確率判定込み）
-export function scheduleEvents(): GameEvent[] {
-  return EVENT_CATALOG.filter((event) => {
-    if (!event.isProbabilistic) return true
-    return Math.random() < event.triggerProbability
-  }).sort((a, b) => a.triggerTime - b.triggerTime)
+// --- 調達系イベント ---
+const PROCUREMENT_EVENTS: GameEvent[] = [
+  {
+    id: 'P1_parts_delay',
+    category: 'procurement',
+    characterId: 'procurement',
+    title: '重要部品の入荷遅延',
+    description: '調達担当 木村から連絡。「ACサーボモーターの入荷が遅れそうです。大東電機から今朝連絡があり、今週予定の納入が来週にずれるとのこと。フリー在庫は0台。対策が必要です。」',
+    severity: 'high',
+    triggerDay: 1,
+    triggerProbability: 0.7,
+    affectedDepartment: 'procurement',
+    requiresSupplierNegotiation: true,
+    choices: [
+      { id: 'find_alternative', label: '代替サプライヤーを探す', actionType: 'self', timeCost: 'half_day', context: '木村と一緒に代替を探す。サプライヤー交渉が発生。' },
+      { id: 'delegate_procurement', label: '木村に代替手配を一任する', actionType: 'dispatch', dispatchTarget: 'procurement', timeCost: 'none', context: '木村の判断に任せる。' },
+      { id: 'reschedule_production', label: '工程順序を入れ替えて対応', actionType: 'self', timeCost: 'half_day', context: '部品が届くまで他の案件を先に進める。' },
+      { id: 'defer_delay', label: '状況を見守る', actionType: 'defer', timeCost: 'none', context: '先送り。リスクが蓄積する。' },
+    ],
+  },
+  {
+    id: 'P2_price_increase',
+    category: 'procurement',
+    characterId: 'procurement',
+    title: '部品価格の値上げ通知',
+    description: '調達担当 木村が渋い顔で報告。「三河精密から来月以降の精密部品が15%値上げになると通知が来ました。今週中に継続か切替かの方針を決めたいのですが。」',
+    severity: 'medium',
+    triggerDay: 3,
+    triggerProbability: 0.5,
+    affectedDepartment: 'procurement',
+    requiresSupplierNegotiation: true,
+    choices: [
+      { id: 'negotiate_price', label: 'サプライヤーと価格交渉する', actionType: 'self', timeCost: 'half_day', context: '三河精密と交渉。好感度が影響。' },
+      { id: 'find_cheaper', label: '代替サプライヤーを検討する', actionType: 'self', timeCost: 'half_day', context: '丸山金属等、他社に切替検討。品質リスクあり。' },
+      { id: 'accept_increase', label: '値上げを受け入れる', actionType: 'self', timeCost: 'none', context: 'コスト管理に影響するが関係維持。' },
+    ],
+  },
+  {
+    id: 'P3_quality_issue',
+    category: 'procurement',
+    characterId: 'procurement',
+    title: '外注品の品質不良',
+    description: '調達担当 木村から緊急連絡。「坂本製作所から納品された溶接フレーム10台のうち3台に寸法不良が見つかりました。坂本さんは"交換品は週末には出せる"と言っていますが、今週の生産に穴が開きます。」',
+    severity: 'high',
+    triggerDay: 2,
+    triggerProbability: 0.6,
+    affectedDepartment: 'procurement',
+    requiresSupplierNegotiation: true,
+    choices: [
+      { id: 'accept_partial', label: '良品7台で進め、不良は後日交換', actionType: 'self', timeCost: 'none', context: '使える分で工程を進める。納期影響あり。' },
+      { id: 'demand_urgent', label: '坂本に緊急交換を依頼する', actionType: 'self', timeCost: 'half_day', context: 'サプライヤー交渉。好感度に影響。' },
+      { id: 'delegate_qa', label: '田中に品質確認を任せる', actionType: 'dispatch', dispatchTarget: 'subordinate1', timeCost: 'none', context: '品証と連携して対応。' },
+    ],
+  },
+]
+
+// --- 製造系イベント ---
+const MANUFACTURING_EVENTS: GameEvent[] = [
+  {
+    id: 'M1_line_trouble',
+    category: 'manufacturing',
+    characterId: 'workshop',
+    title: '組立ラインの不具合',
+    description: '製造職長 谷口から連絡。「第2組立ラインの自動ねじ締め機がおかしいです。完全に止まってはいませんが、精度が落ちてます。このまま続けると品質リスクがあります。」',
+    severity: 'high',
+    triggerDay: 1,
+    triggerProbability: 0.6,
+    affectedDepartment: 'manufacturing',
+    choices: [
+      { id: 'stop_and_fix', label: 'ラインを止めて修理する', actionType: 'self', timeCost: 'half_day', context: '確実に直るが生産が止まる。' },
+      { id: 'manual_switch', label: '手作業に切り替えて継続', actionType: 'self', timeCost: 'none', context: '生産は続くが速度低下。現場信頼度に影響。' },
+      { id: 'delegate_workshop', label: '谷口に判断を任せる', actionType: 'dispatch', dispatchTarget: 'workshop', timeCost: 'none', context: '現場のプロに任せる。信頼関係が影響。' },
+      { id: 'defer_trouble', label: '様子を見る', actionType: 'defer', timeCost: 'none', context: '先送り。品質リスクが蓄積。' },
+    ],
+  },
+  {
+    id: 'M2_bottleneck',
+    category: 'manufacturing',
+    characterId: 'workshop',
+    title: '工程ボトルネック発生',
+    description: '製造職長 谷口が報告。「溶接工程がボトルネックになってます。下流の組立が待ち状態です。人員を増やすか、優先順位を変えるか判断が必要です。」',
+    severity: 'medium',
+    triggerDay: 3,
+    triggerProbability: 0.7,
+    affectedDepartment: 'manufacturing',
+    choices: [
+      { id: 'add_workers', label: '他ラインから人員を移動する', actionType: 'self', timeCost: 'half_day', context: '溶接工程を加速するが、他ラインの能力が落ちる。' },
+      { id: 'reprioritize', label: '生産優先順位を組み直す', actionType: 'self', timeCost: 'half_day', context: '全体最適を目指して再計画。' },
+      { id: 'overtime', label: '溶接工程に残業を指示する', actionType: 'self', timeCost: 'none', context: 'コスト増加だが生産維持。現場の疲労蓄積。' },
+    ],
+  },
+  {
+    id: 'M3_quality_escape',
+    category: 'manufacturing',
+    characterId: 'workshop',
+    title: '品質問題の発覚',
+    description: '製造職長 谷口が深刻な顔で来た。「朝の検査で、昨日組み立てた搬送ユニット2台にトルク不良が見つかりました。出荷前に見つかってよかったですが、手直しが必要です。」',
+    severity: 'high',
+    triggerDay: 4,
+    triggerProbability: 0.5,
+    affectedDepartment: 'manufacturing',
+    choices: [
+      { id: 'rework_priority', label: '最優先で手直しする', actionType: 'self', timeCost: 'half_day', context: '品質を確保するが他の生産が遅れる。' },
+      { id: 'delegate_rework', label: '佐々木に手直し監督を任せる', actionType: 'dispatch', dispatchTarget: 'subordinate2', timeCost: 'none', context: '佐々木の経験を活用。' },
+      { id: 'defer_rework', label: '今週末にまとめて手直しする', actionType: 'defer', timeCost: 'none', context: '先送り。出荷遅延リスク。' },
+    ],
+  },
+]
+
+// --- 能力系イベント（設備故障・人員欠勤） ---
+const CAPACITY_EVENTS: GameEvent[] = [
+  {
+    id: 'C1_equipment_breakdown',
+    category: 'capacity',
+    characterId: 'workshop',
+    title: '設備故障 — 溶接機停止',
+    description: '製造職長 谷口から緊急連絡。「溶接ラインのスポット溶接機が故障しました。修理業者は最短で明日来れるそうです。今日の溶接工程は止まります。」',
+    severity: 'critical',
+    triggerDay: 2,
+    triggerProbability: 0.4,
+    affectedDepartment: 'manufacturing',
+    choices: [
+      { id: 'call_repair', label: '修理業者を緊急手配する', actionType: 'self', timeCost: 'half_day', context: '追加コストで当日中に修理を試みる。' },
+      { id: 'manual_weld', label: '手溶接で代替する', actionType: 'self', timeCost: 'none', context: '生産速度は半減するが止まらない。品質管理が必要。' },
+      { id: 'reassign_work', label: '他のラインの作業を前倒しする', actionType: 'self', timeCost: 'half_day', context: '溶接が復旧するまで他の作業で時間を稼ぐ。' },
+    ],
+  },
+  {
+    id: 'C2_worker_absence',
+    category: 'capacity',
+    characterId: 'workshop',
+    title: '作業者の突発欠勤',
+    description: '製造職長 谷口から朝一の連絡。「今日、第1組立ラインの熟練工が2名インフルエンザで休みです。ライン能力が30%下がります。配置転換か工程調整が必要です。」',
+    severity: 'high',
+    triggerDay: 1,
+    triggerProbability: 0.5,
+    affectedDepartment: 'manufacturing',
+    choices: [
+      { id: 'reassign_workers', label: '他ラインから応援を入れる', actionType: 'self', timeCost: 'half_day', context: '第1ラインを維持するが他ラインが弱くなる。' },
+      { id: 'reduce_plan', label: '今日の生産計画を縮小する', actionType: 'self', timeCost: 'none', context: '無理をしない。納期に影響する可能性。' },
+      { id: 'overtime_others', label: '残りの作業者に残業を依頼する', actionType: 'self', timeCost: 'none', context: 'コスト増加。現場の疲労。' },
+    ],
+  },
+  {
+    id: 'C3_overtime_limit',
+    category: 'capacity',
+    characterId: 'dept_manager',
+    title: '残業制限の通達',
+    description: '製造部長 橋本から通達。「今月の残業時間が上限に近づいている。今週以降の残業は原則禁止だ。で、コストへの影響は？」',
+    severity: 'medium',
+    triggerDay: 3,
+    triggerProbability: 0.4,
+    affectedDepartment: 'manufacturing',
+    choices: [
+      { id: 'accept_limit', label: '残業制限を受け入れて計画調整', actionType: 'self', timeCost: 'half_day', context: 'コスト管理改善。納期に影響する可能性。' },
+      { id: 'request_exception', label: '例外申請を出す', actionType: 'self', timeCost: 'half_day', context: '部長との関係に影響。認められれば残業継続。' },
+      { id: 'efficiency_up', label: '作業効率改善で対応する', actionType: 'self', timeCost: 'full_day', context: '根本対策だが時間がかかる。' },
+    ],
+  },
+  {
+    id: 'C4_maintenance_due',
+    category: 'capacity',
+    characterId: 'workshop',
+    title: '定期メンテナンス時期',
+    description: '製造職長 谷口から相談。「第1組立ラインの定期メンテナンスが今週予定です。1日止めないといけないんですが、今週の生産計画を考えるとタイミングが悩ましい。」',
+    severity: 'medium',
+    triggerDay: 1,
+    triggerProbability: 0.6,
+    affectedDepartment: 'manufacturing',
+    choices: [
+      { id: 'do_maintenance', label: '予定通りメンテナンスを実施', actionType: 'self', timeCost: 'full_day', context: '1日生産が止まるが設備の信頼性維持。' },
+      { id: 'postpone_maintenance', label: '来週に延期する', actionType: 'self', timeCost: 'none', context: '今週の生産は維持。故障リスクが上がる。' },
+      { id: 'partial_maintenance', label: '半日で簡易メンテのみ実施', actionType: 'self', timeCost: 'half_day', context: '妥協案。設備リスクは少し残る。' },
+    ],
+  },
+]
+
+// --- 工場長指令イベント（週の頭に1つ発生） ---
+const DIRECTOR_EVENTS: GameEvent[] = [
+  {
+    id: 'D1_cost_reduction',
+    category: 'director',
+    characterId: 'factory_director',
+    title: '工場長指令：コスト削減',
+    description: '工場長 村上が全体朝礼で宣言。「今週はコスト管理を徹底しろ。残業は最小限、外注費も抑えろ。言い訳はいい、数字で見せてくれ。」',
+    severity: 'critical',
+    triggerDay: 1,
+    triggerProbability: 1.0,
+    affectedDepartment: 'manufacturing',
+    choices: [
+      { id: 'acknowledge_cost', label: '了解しました（指令を受領）', actionType: 'self', timeCost: 'none', context: '工場長の指令は拒否できない。今週はコスト管理を最優先に。' },
+    ],
+  },
+  {
+    id: 'D2_delivery_push',
+    category: 'director',
+    characterId: 'factory_director',
+    title: '工場長指令：納期厳守',
+    description: '工場長 村上が生産管理に来た。「今週の出荷は1台も遅らせるな。客先から催促が来てる。どうするんだ、松田くん。」',
+    severity: 'critical',
+    triggerDay: 1,
+    triggerProbability: 1.0,
+    affectedDepartment: 'manufacturing',
+    choices: [
+      { id: 'acknowledge_delivery', label: '了解しました（指令を受領）', actionType: 'self', timeCost: 'none', context: '工場長の指令は拒否できない。今週は納期達成を最優先に。' },
+    ],
+  },
+  {
+    id: 'D3_quality_focus',
+    category: 'director',
+    characterId: 'factory_director',
+    title: '工場長指令：品質強化',
+    description: '工場長 村上が厳しい表情で指示。「先月のクレーム件数が多すぎる。今週は品質検査を倍にしろ。不良品は絶対に出すな。」',
+    severity: 'critical',
+    triggerDay: 1,
+    triggerProbability: 1.0,
+    affectedDepartment: 'manufacturing',
+    choices: [
+      { id: 'acknowledge_quality', label: '了解しました（指令を受領）', actionType: 'self', timeCost: 'none', context: '工場長の指令は拒否できない。今週は品質最優先。現場信頼度に影響。' },
+    ],
+  },
+  {
+    id: 'D4_capacity_increase',
+    category: 'director',
+    characterId: 'factory_director',
+    title: '工場長指令：増産体制',
+    description: '工場長 村上が朝礼で宣言。「来月の大型案件に向けて、今週から増産体制に入る。ライン稼働率を上げろ。言い訳はいい、やるんだ。」',
+    severity: 'critical',
+    triggerDay: 1,
+    triggerProbability: 1.0,
+    affectedDepartment: 'manufacturing',
+    choices: [
+      { id: 'acknowledge_increase', label: '了解しました（指令を受領）', actionType: 'self', timeCost: 'none', context: '工場長の指令は拒否できない。今週は生産量最大化。' },
+    ],
+  },
+]
+
+// --- 全イベントカタログ ---
+export const ALL_EVENTS = {
+  sales: SALES_EVENTS,
+  procurement: PROCUREMENT_EVENTS,
+  manufacturing: MANUFACTURING_EVENTS,
+  capacity: CAPACITY_EVENTS,
+  director: DIRECTOR_EVENTS,
+}
+
+// 週のイベントをスケジュールする
+export function scheduleWeeklyEvents(weekNumber: number): GameEvent[] {
+  const events: GameEvent[] = []
+
+  // 工場長指令を1つ選択（週ごとにローテーション）
+  const directorIdx = (weekNumber - 1) % DIRECTOR_EVENTS.length
+  events.push({ ...DIRECTOR_EVENTS[directorIdx], triggerDay: 1 })
+
+  // 各カテゴリからランダムにイベントを選択
+  const categories = ['sales', 'procurement', 'manufacturing', 'capacity'] as const
+  for (const cat of categories) {
+    const pool = ALL_EVENTS[cat]
+    // 各カテゴリから2-3件をランダム選択（確率判定付き）
+    const shuffled = [...pool].sort(() => Math.random() - 0.5)
+    for (const event of shuffled) {
+      if (Math.random() < event.triggerProbability) {
+        // 日を再割り当て（週全体にばらけさせる）
+        const day = Math.floor(Math.random() * 5) + 1
+        events.push({ ...event, triggerDay: day })
+      }
+    }
+  }
+
+  // 日ごとにソート
+  return events.sort((a, b) => a.triggerDay - b.triggerDay)
+}
+
+// 特定の日のイベントを取得
+export function getEventsForDay(events: GameEvent[], day: number): GameEvent[] {
+  return events.filter(e => e.triggerDay === day)
 }

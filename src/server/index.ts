@@ -23,7 +23,7 @@ app.use(express.json())
 const sessions = new SessionStore(GOOGLE_API_KEY)
 
 // APIルート
-app.use('/api', createRouter(sessions))
+app.use('/api', createRouter(sessions, GOOGLE_API_KEY))
 
 // ヘルスチェック
 app.get('/health', (_req, res) => {

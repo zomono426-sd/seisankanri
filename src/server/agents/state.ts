@@ -1,57 +1,132 @@
 import { Annotation } from '@langchain/langgraph'
-import type { GameState, PlayerAction, ConversationMessage, GameEvent } from '../../shared/types.js'
+import type {
+  GameState,
+  PlayerAction,
+  GameEvent,
+  EventStreamItem,
+  Supplier,
+  ProductionLine,
+  WorkCapacity,
+  DepartmentStatus,
+  Department,
+  FactoryDirective,
+  WeeklyReport,
+  SupplierNegotiation,
+  Scores,
+  CharacterId,
+  MrpState,
+  ProductionOrder,
+  InventoryItem,
+} from '../../shared/types.js'
 
-// LangGraph の GameState Annotation 定義
+// LangGraph v2 — 週次/月次ゲームの State Annotation 定義
 export const GameStateAnnotation = Annotation.Root({
   // セッション情報
   sessionId: Annotation<string>,
 
   // ゲーム進行
-  gameTime: Annotation<number>,
-  timeSlot: Annotation<GameState['timeSlot']>,
-  phase: Annotation<GameState['phase']>,
-
-  // イベント管理
-  events: Annotation<GameEvent[]>({
+  phase: Annotation<GameState['phase']>({
     reducer: (_prev, next) => next,
-    default: () => [],
+    default: () => 'playing' as GameState['phase'],
   }),
-  pendingEvent: Annotation<GameEvent | null>({
+  currentWeek: Annotation<number>({
     reducer: (_prev, next) => next,
-    default: () => null,
+    default: () => 1,
   }),
-  resolvedEventIds: Annotation<string[]>({
-    reducer: (prev, next) => [...prev, ...next],
-    default: () => [],
+  currentDay: Annotation<number>({
+    reducer: (_prev, next) => next,
+    default: () => 1,
   }),
-  deferredEventIds: Annotation<string[]>({
-    reducer: (prev, next) => [...prev, ...next],
-    default: () => [],
+  dayTimeRemaining: Annotation<number>({
+    reducer: (_prev, next) => next,
+    default: () => 2,
   }),
 
   // スコア・関係値
-  scores: Annotation<GameState['scores']>({
+  scores: Annotation<Scores>({
     reducer: (_prev, next) => next,
     default: () => ({
-      deliveryRate: 100,
+      deliveryRate: 80,
       fieldTrust: 70,
-      costControl: 80,
-      customerSatisfaction: 90,
+      costControl: 75,
+      customerSatisfaction: 80,
     }),
   }),
-  relationships: Annotation<GameState['relationships']>({
+  weeklyScores: Annotation<WeeklyReport[]>({
     reducer: (_prev, next) => next,
-    default: () => ({} as GameState['relationships']),
+    default: () => [],
+  }),
+  relationships: Annotation<Record<CharacterId, number>>({
+    reducer: (_prev, next) => next,
+    default: () => ({} as Record<CharacterId, number>),
+  }),
+
+  // 部門状態
+  departments: Annotation<Record<Department, DepartmentStatus>>({
+    reducer: (_prev, next) => next,
+    default: () => ({} as Record<Department, DepartmentStatus>),
+  }),
+
+  // 製造ライン
+  productionLines: Annotation<ProductionLine[]>({
+    reducer: (_prev, next) => next,
+    default: () => [],
+  }),
+
+  // サプライヤー
+  suppliers: Annotation<Supplier[]>({
+    reducer: (_prev, next) => next,
+    default: () => [],
+  }),
+
+  // 作業能力
+  workCapacity: Annotation<WorkCapacity>({
+    reducer: (_prev, next) => next,
+    default: () => ({
+      totalWorkers: 24,
+      presentWorkers: 24,
+      equipmentTotal: 6,
+      equipmentOperational: 6,
+      overallCapacity: 100,
+    }),
+  }),
+
+  // 工場長指令
+  activeDirective: Annotation<FactoryDirective | null>({
+    reducer: (_prev, next) => next,
+    default: () => null,
+  }),
+
+  // イベント管理
+  eventStream: Annotation<EventStreamItem[]>({
+    reducer: (_prev, next) => next,
+    default: () => [],
+  }),
+  pendingEvents: Annotation<GameEvent[]>({
+    reducer: (_prev, next) => next,
+    default: () => [],
+  }),
+  pendingNegotiation: Annotation<SupplierNegotiation | null>({
+    reducer: (_prev, next) => next,
+    default: () => null,
+  }),
+  allWeekEvents: Annotation<GameEvent[]>({
+    reducer: (_prev, next) => next,
+    default: () => [],
+  }),
+  resolvedEventIds: Annotation<string[]>({
+    reducer: (_prev, next) => next,
+    default: () => [],
   }),
 
   // MRP状態
-  mrpState: Annotation<GameState['mrpState']>({
+  mrpState: Annotation<MrpState>({
     reducer: (_prev, next) => next,
     default: () => ({
       productionOrders: [],
       inventory: [],
-      totalPlanned: 0,
-      totalCompleted: 0,
+      weeklyPlanned: 0,
+      weeklyCompleted: 0,
     }),
   }),
 
@@ -61,13 +136,7 @@ export const GameStateAnnotation = Annotation.Root({
     default: () => null,
   }),
 
-  // 会話履歴
-  conversations: Annotation<ConversationMessage[]>({
-    reducer: (prev, next) => [...prev, ...next],
-    default: () => [],
-  }),
-
-  // キャラクターの返答
+  // キャラクター応答
   characterResponse: Annotation<string>({
     reducer: (_prev, next) => next,
     default: () => '',
@@ -77,8 +146,8 @@ export const GameStateAnnotation = Annotation.Root({
   lastActionOutcome: Annotation<{
     success: boolean
     message: string
-    scoreDeltas: Partial<GameState['scores']>
-    timeConsumed: number
+    scoreDeltas: Partial<Scores>
+    timeConsumed: string
   } | null>({
     reducer: (_prev, next) => next,
     default: () => null,
