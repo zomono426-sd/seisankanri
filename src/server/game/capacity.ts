@@ -160,7 +160,7 @@ export function allocateToOrder(
   quantity: number,
   currentWeek: number,
   currentDay: number
-): { updatedOrders: ProductionOrder[]; updatedStock: Record<string, number> } {
+): { updatedOrders: ProductionOrder[]; updatedStock: Record<string, number>; allocatedQuantity: number } {
   const order = orders.find(o => o.orderNo === orderNo)
   if (!order) throw new Error('Order not found')
 
@@ -184,7 +184,7 @@ export function allocateToOrder(
     ...lineStock,
     [order.line]: available - actual,
   }
-  return { updatedOrders, updatedStock: updatedStockMap }
+  return { updatedOrders, updatedStock: updatedStockMap, allocatedQuantity: actual }
 }
 
 // 日次のリセット（翌日になったら欠勤リセット等は行わない — 継続影響）

@@ -4,7 +4,7 @@ import { generateDirective } from '../../game/director.js'
 import { evaluateWeekly } from '../../game/scoring.js'
 import { dailyCapacityUpdate, produceLineStock } from '../../game/capacity.js'
 import { randomUUID } from 'crypto'
-import type { EventStreamItem, GameState } from '../../../shared/types.js'
+import type { EventStreamItem, GameState, InventorySnapshot } from '../../../shared/types.js'
 
 // 日 → 次の日 or 週末 → 次の週 or 月末 に進める
 export async function timeAdvanceNode(
@@ -22,7 +22,7 @@ export async function timeAdvanceNode(
     dailyCapacityUpdate(state.productionLines, state.workCapacity)
 
   // MRP進捗: ラインの日産能力をラインストックに蓄積（受注への引当はユーザー操作）
-  const { updatedStock } = produceLineStock(updatedLines, state.mrpState.lineStock)
+  const { updatedStock, dailyProduced } = produceLineStock(updatedLines, state.mrpState.lineStock)
 
   // 受注ステータス更新（納期チェック）
   const absoluteNow = (currentWeek - 1) * 5 + currentDay
@@ -35,11 +35,28 @@ export async function timeAdvanceNode(
     return o
   })
 
+  // 日次スナップショット: 生産量・引当量・在庫レベル・イベント影響を記録
+  const snapshot: InventorySnapshot = {
+    week: currentWeek,
+    day: currentDay,
+    lineStock: { ...updatedStock },
+    totalStock: Object.values(updatedStock).reduce((s, v) => s + v, 0),
+    dailyProduced,
+    dailyAllocated: state.mrpState.totalAllocatedToday,
+    events: state.eventStream
+      .filter(e => e.timestamp.week === currentWeek && e.timestamp.day === currentDay
+        && (e.category === 'manufacturing' || e.category === 'capacity'))
+      .map(e => e.title),
+  }
+
   const newMrp = {
     ...state.mrpState,
     lineStock: updatedStock,
     productionOrders: updatedOrders,
     weeklyCompleted: updatedOrders.reduce((sum, o) => sum + o.completedQuantity, 0),
+    inventoryHistory: [...(state.mrpState.inventoryHistory ?? []), snapshot],
+    totalDailyProduced: dailyProduced,
+    totalAllocatedToday: 0,
   }
 
   if (currentDay < 5) {

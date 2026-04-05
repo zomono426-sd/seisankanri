@@ -1,4 +1,5 @@
 import type { GameState, ProductionOrder, InventoryItem } from '../../shared/types'
+import { InventoryTransition } from './InventoryTransition'
 
 interface Props {
   gameState: GameState
@@ -271,62 +272,92 @@ export function MonitoringDashboard({ gameState, onAllocateOrder }: Props) {
   // Line stock
   const lineStock = mrpState.lineStock ?? {}
 
+  // 累計生産量（在庫履歴から集計）
+  const totalProduced = (mrpState.inventoryHistory ?? []).reduce((sum, s) => sum + s.dailyProduced, 0)
+
+  // 現在の合計在庫
+  const currentTotalStock = Object.values(lineStock).reduce((sum, v) => sum + v, 0)
+
   return (
     <div className="flex flex-col gap-2 h-full overflow-y-auto">
 
-      {/* === Row 1: 週次生産計画ヒーロー === */}
+      {/* === Row 1: 生産・在庫サマリー + 在庫推移 === */}
       <div className="bg-factory-panel border border-factory-border rounded-lg p-3 flex-shrink-0">
+        {/* KPIカード */}
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-xs text-factory-amber uppercase tracking-wider font-bold">
-            月次生産計画
+            生産・在庫サマリー
           </h3>
-          <div className="flex items-center gap-3">
-            <span className={`text-2xl font-mono font-bold ${isBehind ? 'text-red-400' : 'text-factory-amber'}`}>
-              {Math.round(weeklyPct)}%
-            </span>
-            <span className="text-xs text-factory-muted">
-              {mrpState.weeklyCompleted}/{mrpState.weeklyPlanned}台
-            </span>
+          {/* Week timeline */}
+          <div className="flex gap-1">
+            {[1, 2, 3, 4].map(week => {
+              const isCurrent = week === currentWeek
+              const isPast = week < currentWeek
+              return (
+                <div key={week} className="text-center px-1">
+                  <div className={`text-[10px] font-mono ${
+                    isCurrent ? 'text-factory-amber font-bold' :
+                    isPast ? 'text-factory-muted' :
+                    'text-factory-muted/50'
+                  }`}>
+                    W{week}
+                  </div>
+                  <div className={`h-1 rounded-full mt-0.5 w-6 ${
+                    isCurrent ? 'bg-factory-amber' :
+                    isPast ? 'bg-factory-muted/50' :
+                    'bg-factory-border/50'
+                  }`} />
+                </div>
+              )
+            })}
           </div>
         </div>
 
-        {/* Large progress bar */}
-        <div className="h-4 bg-factory-border rounded-full overflow-hidden relative mb-2">
-          {/* Expected progress marker */}
-          <div
-            className="absolute top-0 bottom-0 w-0.5 bg-white/30 z-10"
-            style={{ left: `${expectedPct}%` }}
-            title={`期待進捗: ${Math.round(expectedPct)}%`}
-          />
-          <div
-            className={`h-full rounded-full transition-all ${isBehind ? 'bg-red-500' : 'bg-factory-amber'}`}
-            style={{ width: `${Math.min(weeklyPct, 100)}%` }}
-          />
+        <div className="grid grid-cols-4 gap-2 mb-3">
+          {/* 計画台数 */}
+          <div className="bg-factory-bg/50 rounded p-2 text-center">
+            <div className="text-[10px] text-factory-muted mb-0.5">計画</div>
+            <div className="text-lg font-mono font-bold text-factory-text">{mrpState.weeklyPlanned}</div>
+            <div className="text-[10px] text-factory-muted">台</div>
+          </div>
+          {/* 累計生産 */}
+          <div className="bg-factory-bg/50 rounded p-2 text-center">
+            <div className="text-[10px] text-green-400 mb-0.5">累計生産</div>
+            <div className="text-lg font-mono font-bold text-green-400">{totalProduced}</div>
+            <div className="text-[10px] text-factory-muted">台</div>
+          </div>
+          {/* 累計引当 */}
+          <div className="bg-factory-bg/50 rounded p-2 text-center">
+            <div className="text-[10px] text-factory-amber mb-0.5">累計引当</div>
+            <div className="text-lg font-mono font-bold text-factory-amber">{mrpState.weeklyCompleted}</div>
+            <div className="text-[10px] text-factory-muted">台</div>
+          </div>
+          {/* 現在在庫 */}
+          <div className="bg-factory-bg/50 rounded p-2 text-center">
+            <div className="text-[10px] text-blue-400 mb-0.5">現在在庫</div>
+            <div className="text-lg font-mono font-bold text-blue-400">{currentTotalStock}</div>
+            <div className="text-[10px] text-factory-muted">台</div>
+          </div>
         </div>
 
-        {/* Week timeline */}
-        <div className="flex gap-1">
-          {[1, 2, 3, 4].map(week => {
-            const isCurrent = week === currentWeek
-            const isPast = week < currentWeek
-            return (
-              <div key={week} className="flex-1 text-center">
-                <div className={`text-[10px] font-mono ${
-                  isCurrent ? 'text-factory-amber font-bold' :
-                  isPast ? 'text-factory-muted' :
-                  'text-factory-muted/50'
-                }`}>
-                  W{week}
-                </div>
-                <div className={`h-1 rounded-full mt-0.5 ${
-                  isCurrent ? 'bg-factory-amber' :
-                  isPast ? 'bg-factory-muted/50' :
-                  'bg-factory-border/50'
-                }`} />
-              </div>
-            )
-          })}
+        {/* フロー表示: 生産 → 在庫 → 引当 → 受注消化 */}
+        <div className="flex items-center justify-center gap-1 text-[10px] text-factory-muted mb-3">
+          <span className="text-green-400">週次生産</span>
+          <span>→</span>
+          <span className="text-blue-400">在庫蓄積</span>
+          <span>→</span>
+          <span className="text-factory-amber">引当</span>
+          <span>→</span>
+          <span className="text-factory-text">受注消化</span>
         </div>
+
+        {/* 在庫推移チャート */}
+        <InventoryTransition
+          inventoryHistory={mrpState.inventoryHistory ?? []}
+          currentWeek={currentWeek}
+          currentDay={currentDay}
+        />
+
         {isBehind && (
           <div className="text-xs text-red-400 mt-1 font-bold">
             計画に対して遅延しています
