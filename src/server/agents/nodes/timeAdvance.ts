@@ -2,9 +2,9 @@ import type { GameGraphState } from '../state.js'
 import { scheduleWeeklyEvents, getEventsForDay } from '../../game/events.js'
 import { generateDirective } from '../../game/director.js'
 import { evaluateWeekly } from '../../game/scoring.js'
-import { dailyCapacityUpdate, produceIntermediates, checkPartsAvailability, startAssembly } from '../../game/capacity.js'
+import { dailyCapacityUpdate, produceIntermediates, checkPartsAvailability, startAssembly, processDeliveries, checkAndReorder } from '../../game/capacity.js'
 import { randomUUID } from 'crypto'
-import type { EventStreamItem, GameState, InventorySnapshot, ProductionOrder } from '../../../shared/types.js'
+import type { EventStreamItem, GameState, InventorySnapshot, ProductionOrder, PurchaseOrder } from '../../../shared/types.js'
 
 // 日 → 次の日 or 週末 → 次の週 or 月末 に進める
 export async function timeAdvanceNode(
@@ -21,13 +21,51 @@ export async function timeAdvanceNode(
   const { lines: updatedLines, capacity: updatedCapacity } =
     dailyCapacityUpdate(state.productionLines, state.workCapacity)
 
-  // (a) 中間品の見込み生産（BOM展開で原材料を消費）
+  // (0) 原材料の納入処理（当日届く分を在庫に加算）
+  const currentPOs = state.mrpState.purchaseOrders ?? []
+  const { updatedOrders: postDeliveryOrders, updatedInventory: postDeliveryInventory, deliveryLog } =
+    processDeliveries(currentPOs, state.mrpState.inventory, currentWeek, currentDay)
+
+  // (a) 中間品の見込み生産（BOM展開で原材料を消費）— 納入後の在庫を使用
   const { updatedInventory: postProductionInventory, dailyProduced, productionLog } = produceIntermediates(
     updatedLines,
     state.mrpState.productionPlans,
-    state.mrpState.inventory,
+    postDeliveryInventory,
     state.mrpState.bom
   )
+
+  // (a2) 自動発注チェック（生産で消費した後の在庫水準で判定）
+  const { newOrders: reorderNewOrders, reorderLog } =
+    checkAndReorder(postProductionInventory, postDeliveryOrders, currentWeek, currentDay)
+  const allPurchaseOrders: PurchaseOrder[] = [...postDeliveryOrders, ...reorderNewOrders]
+
+  // 納入ログをイベントストリームに追加
+  const procurementStreamItems: EventStreamItem[] = []
+  for (const logEntry of deliveryLog) {
+    procurementStreamItems.push({
+      id: randomUUID(),
+      timestamp: { week: currentWeek, day: currentDay },
+      characterId: 'system',
+      title: '原材料納入',
+      content: logEntry,
+      severity: 'low',
+      category: 'procurement',
+      isRead: true,
+    })
+  }
+  // 発注ログをイベントストリームに追加
+  for (const logEntry of reorderLog) {
+    procurementStreamItems.push({
+      id: randomUUID(),
+      timestamp: { week: currentWeek, day: currentDay },
+      characterId: 'procurement',
+      title: '自動発注',
+      content: logEntry,
+      severity: 'low',
+      category: 'procurement',
+      isRead: true,
+    })
+  }
 
   // 生産ログをイベントストリームに追加
   const productionStreamItems: EventStreamItem[] = []
@@ -110,9 +148,12 @@ export async function timeAdvanceNode(
 
   // (d) 日次スナップショット
   const intermediateStock: Record<string, number> = {}
+  const rawMaterialStock: Record<string, number> = {}
   for (const item of currentInventory) {
     if (item.itemType === 'intermediate') {
       intermediateStock[item.partNo] = item.onHand
+    } else if (item.itemType === 'rawMaterial') {
+      rawMaterialStock[item.partNo] = item.onHand
     }
   }
 
@@ -120,6 +161,7 @@ export async function timeAdvanceNode(
     week: currentWeek,
     day: currentDay,
     intermediateStock,
+    rawMaterialStock,
     totalIntermediateStock: Object.values(intermediateStock).reduce((s, v) => s + v, 0),
     dailyProduced,
     dailyAssembled: state.mrpState.totalAllocatedToday + dailyAssembled,
@@ -133,14 +175,15 @@ export async function timeAdvanceNode(
     ...state.mrpState,
     inventory: currentInventory,
     productionOrders: updatedOrders,
+    purchaseOrders: allPurchaseOrders,
     weeklyCompleted: updatedOrders.reduce((sum, o) => sum + o.completedQuantity, 0),
     inventoryHistory: [...(state.mrpState.inventoryHistory ?? []), snapshot],
     totalDailyProduced: dailyProduced,
     totalAllocatedToday: 0,
   }
 
-  // 生産ログ・組立ログをイベントストリームに結合
-  const allNewStreamItems = [...productionStreamItems, ...assemblyStreamItems]
+  // 生産ログ・組立ログ・調達ログをイベントストリームに結合
+  const allNewStreamItems = [...procurementStreamItems, ...productionStreamItems, ...assemblyStreamItems]
 
   if (currentDay < 5) {
     // --- 次の日へ ---

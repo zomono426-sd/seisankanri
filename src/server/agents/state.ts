@@ -132,6 +132,7 @@ export const GameStateAnnotation = Annotation.Root({
       inventoryHistory: [],
       totalDailyProduced: 0,
       totalAllocatedToday: 0,
+      purchaseOrders: [],
     }),
   }),
 

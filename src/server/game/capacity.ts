@@ -1,4 +1,5 @@
-import type { WorkCapacity, ProductionLine, ProductionOrder, LineProductionPlan, InventoryItem, BomEntry } from '../../shared/types.js'
+import type { WorkCapacity, ProductionLine, ProductionOrder, LineProductionPlan, InventoryItem, BomEntry, PurchaseOrder } from '../../shared/types.js'
+import { randomUUID } from 'crypto'
 
 // ============================================================
 // 作業能力システム — 設備故障・人員欠勤の影響管理
@@ -321,3 +322,108 @@ export function dailyCapacityUpdate(
   )
   return { lines: updatedLines, capacity }
 }
+
+// ============================================================
+// 原材料調達サイクル
+// ============================================================
+
+/** 営業日ベースの日付加算（週5日制） */
+function addDays(week: number, day: number, daysToAdd: number): { week: number; day: number } {
+  const absolute = (week - 1) * 5 + day + daysToAdd
+  return {
+    week: Math.ceil(absolute / 5),
+    day: ((absolute - 1) % 5) + 1,
+  }
+}
+
+/** 当日の納入処理: deliveryWeek/Day が当日のPOを処理し在庫に加算 */
+export function processDeliveries(
+  purchaseOrders: PurchaseOrder[],
+  inventory: InventoryItem[],
+  currentWeek: number,
+  currentDay: number,
+): {
+  updatedOrders: PurchaseOrder[]
+  updatedInventory: InventoryItem[]
+  deliveryLog: string[]
+} {
+  const deliveryLog: string[] = []
+  const updatedInventory = [...inventory]
+  const updatedOrders = purchaseOrders.map(po => {
+    if (
+      po.deliveryWeek === currentWeek &&
+      po.deliveryDay === currentDay &&
+      po.status !== 'delivered'
+    ) {
+      // 在庫に加算
+      const idx = updatedInventory.findIndex(i => i.partNo === po.partNo)
+      if (idx >= 0) {
+        const item = updatedInventory[idx]
+        updatedInventory[idx] = {
+          ...item,
+          onHand: item.onHand + po.quantity,
+          free: item.free + po.quantity,
+        }
+        deliveryLog.push(`${item.partName} x${po.quantity} 納入完了`)
+      }
+      return { ...po, status: 'delivered' as const }
+    }
+    return po
+  })
+  return { updatedOrders, updatedInventory, deliveryLog }
+}
+
+/** 在庫チェック→自動発注: free <= reorderPoint の原材料に対しPOを生成 */
+export function checkAndReorder(
+  inventory: InventoryItem[],
+  purchaseOrders: PurchaseOrder[],
+  currentWeek: number,
+  currentDay: number,
+): {
+  newOrders: PurchaseOrder[]
+  reorderLog: string[]
+} {
+  const newOrders: PurchaseOrder[] = []
+  const reorderLog: string[] = []
+
+  for (const item of inventory) {
+    if (item.itemType !== 'rawMaterial') continue
+    if (item.free > item.reorderPoint) continue
+
+    // 二重発注防止: 同品番のactive POがあればスキップ
+    const hasActivePO = purchaseOrders.some(
+      po => po.partNo === item.partNo && (po.status === 'ordered' || po.status === 'in_transit')
+    )
+    if (hasActivePO) continue
+
+    const quantity = item.deliveryQuantity ?? 10
+    const delivery = addDays(currentWeek, currentDay, item.leadTimeDays)
+
+    const dayNames = ['月', '火', '水', '木', '金']
+    const dayName = dayNames[delivery.day - 1] ?? `${delivery.day}`
+
+    newOrders.push({
+      id: `PO-${randomUUID().slice(0, 6)}`,
+      partNo: item.partNo,
+      supplierId: item.supplierId!,
+      quantity,
+      orderWeek: currentWeek,
+      orderDay: currentDay,
+      deliveryWeek: delivery.week,
+      deliveryDay: delivery.day,
+      status: 'in_transit',
+      isEmergency: false,
+    })
+
+    reorderLog.push(`${item.partName} x${quantity} を発注（納入予定: W${delivery.week}${dayName}曜）`)
+  }
+
+  return { newOrders, reorderLog }
+}
+
+// TODO: 緊急発注機能
+// - 原材料テーブルの各行に「緊急発注」ボタンを追加
+// - 通常のleadTimeDaysの半分（切り上げ）で届く
+// - コスト管理スコアに -5 の影響
+// - サプライヤー好感度に -10 の影響
+// - 既存のサプライヤー交渉システム（negotiate API）と統合
