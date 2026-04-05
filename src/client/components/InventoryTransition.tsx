@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import type { InventorySnapshot } from '../../shared/types'
+import { useState, useMemo } from 'react'
+import type { InventorySnapshot, InventoryItem } from '../../shared/types'
 
 const DAY_NAMES = ['月', '火', '水', '木', '金']
 
@@ -7,19 +7,48 @@ interface Props {
   inventoryHistory: InventorySnapshot[]
   currentWeek: number
   currentDay: number
+  inventory: InventoryItem[]
 }
 
 function toAbsoluteDay(week: number, day: number): number {
   return (week - 1) * 5 + day
 }
 
-export function InventoryTransition({ inventoryHistory, currentWeek, currentDay }: Props) {
+const STACK_COLORS = [
+  { bg: 'bg-orange-500', bgHover: 'bg-orange-500/80', text: 'text-orange-400', dot: 'bg-orange-500' },
+  { bg: 'bg-blue-500', bgHover: 'bg-blue-500/80', text: 'text-blue-400', dot: 'bg-blue-500' },
+  { bg: 'bg-emerald-500', bgHover: 'bg-emerald-500/80', text: 'text-emerald-400', dot: 'bg-emerald-500' },
+  { bg: 'bg-purple-500', bgHover: 'bg-purple-500/80', text: 'text-purple-400', dot: 'bg-purple-500' },
+  { bg: 'bg-cyan-500', bgHover: 'bg-cyan-500/80', text: 'text-cyan-400', dot: 'bg-cyan-500' },
+]
+
+export function InventoryTransition({ inventoryHistory, currentWeek, currentDay, inventory }: Props) {
   const [hoveredDay, setHoveredDay] = useState<number | null>(null)
 
   const snapshotMap = new Map<number, InventorySnapshot>()
   for (const s of inventoryHistory) {
     snapshotMap.set(toAbsoluteDay(s.week, s.day), s)
   }
+
+  // 品番→品名マップ
+  const partNameMap = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const item of inventory) {
+      map.set(item.partNo, item.partName)
+    }
+    return map
+  }, [inventory])
+
+  // 全品番を収集（順序固定）
+  const allPartNos = useMemo(() => {
+    const set = new Set<string>()
+    for (const s of inventoryHistory) {
+      for (const partNo of Object.keys(s.intermediateStock)) {
+        set.add(partNo)
+      }
+    }
+    return Array.from(set).sort()
+  }, [inventoryHistory])
 
   const currentAbsDay = toAbsoluteDay(currentWeek, currentDay)
 
@@ -34,16 +63,16 @@ export function InventoryTransition({ inventoryHistory, currentWeek, currentDay 
     <div className="relative">
       <div className="flex items-center justify-between mb-1">
         <h4 className="text-[10px] text-factory-amber uppercase tracking-wider font-bold">中間品在庫推移</h4>
-        <div className="flex items-center gap-3 text-[10px] text-factory-muted">
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-sm bg-blue-500/60 inline-block" />中間品在庫
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="text-green-400">+N</span> 生産
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="text-purple-400">-N</span> 組立
-          </span>
+        <div className="flex items-center gap-2 text-[10px] text-factory-muted flex-wrap">
+          {allPartNos.map((partNo, idx) => {
+            const color = STACK_COLORS[idx % STACK_COLORS.length]
+            return (
+              <span key={partNo} className="flex items-center gap-0.5">
+                <span className={`w-2 h-2 rounded-sm ${color.dot} inline-block`} />
+                <span className={color.text}>{partNameMap.get(partNo) ?? partNo}</span>
+              </span>
+            )
+          })}
         </div>
       </div>
 
@@ -64,9 +93,13 @@ export function InventoryTransition({ inventoryHistory, currentWeek, currentDay 
                 const isFuture = absDay > currentAbsDay
                 const isHovered = hoveredDay === absDay
                 const hasEvents = snapshot && snapshot.events.length > 0
-                const barHeight = snapshot
-                  ? (snapshot.totalIntermediateStock / maxStock) * chartHeight
-                  : 0
+
+                // スタックドバー: 各中間品の高さを計算
+                const segments = allPartNos.map((partNo, idx) => {
+                  const qty = snapshot?.intermediateStock[partNo] ?? 0
+                  const height = snapshot ? (qty / maxStock) * chartHeight : 0
+                  return { partNo, qty, height, color: STACK_COLORS[idx % STACK_COLORS.length] }
+                })
 
                 return (
                   <div
@@ -92,18 +125,23 @@ export function InventoryTransition({ inventoryHistory, currentWeek, currentDay 
                     </div>
 
                     <div
-                      className="w-full flex items-end justify-center"
+                      className="w-full flex flex-col-reverse items-center justify-start"
                       style={{ height: `${chartHeight}px` }}
                     >
                       {snapshot ? (
-                        <div
-                          className={`w-full rounded-t transition-all ${
-                            isCurrent
-                              ? 'bg-blue-500/80 ring-1 ring-blue-400'
-                              : 'bg-blue-500/40'
-                          } ${isHovered ? 'bg-blue-500/70' : ''}`}
-                          style={{ height: `${Math.max(barHeight, 2)}px` }}
-                        />
+                        segments.map((seg, segIdx) => (
+                          seg.qty > 0 ? (
+                            <div
+                              key={seg.partNo}
+                              className={`w-full transition-all ${
+                                isCurrent
+                                  ? `${seg.color.bg}/80 ring-1 ring-white/10`
+                                  : `${seg.color.bg}/40`
+                              } ${isHovered ? `${seg.color.bgHover}` : ''} ${segIdx === segments.length - 1 ? 'rounded-t' : ''}`}
+                              style={{ height: `${Math.max(seg.height, 1)}px` }}
+                            />
+                          ) : null
+                        ))
                       ) : (
                         <div
                           className={`w-full rounded-t ${isFuture ? 'bg-factory-border/20' : 'bg-factory-border/40'}`}
@@ -142,11 +180,15 @@ export function InventoryTransition({ inventoryHistory, currentWeek, currentDay 
                           </div>
                           {Object.entries(snapshot.intermediateStock).length > 0 && (
                             <div className="mt-1 pt-1 border-t border-factory-border/50">
-                              {Object.entries(snapshot.intermediateStock).map(([partNo, qty]) => (
-                                <div key={partNo} className="text-factory-muted">
-                                  {partNo}: {qty}
-                                </div>
-                              ))}
+                              {Object.entries(snapshot.intermediateStock).map(([partNo, qty]) => {
+                                const idx = allPartNos.indexOf(partNo)
+                                const color = STACK_COLORS[idx >= 0 ? idx % STACK_COLORS.length : 0]
+                                return (
+                                  <div key={partNo} className={color.text}>
+                                    {partNameMap.get(partNo) ?? partNo}: {qty}
+                                  </div>
+                                )
+                              })}
                             </div>
                           )}
                           {snapshot.events.length > 0 && (

@@ -24,6 +24,12 @@ export function useGameState() {
   const [weeklyReport, setWeeklyReport] = useState<WeeklyReport | null>(null)
   const [monthlyReport, setMonthlyReport] = useState<MonthlyReport | null>(null)
   const [impactAnalysis, setImpactAnalysis] = useState<ImpactAnalysis | null>(null)
+  const [lastAssemblyResult, setLastAssemblyResult] = useState<{
+    orderNo: string
+    started: boolean
+    missingParts?: Array<{ partNo: string; partName: string; required: number; available: number }>
+    message: string
+  } | null>(null)
 
   const startGame = useCallback(async () => {
     setPhase('loading')
@@ -152,6 +158,9 @@ export function useGameState() {
       try {
         const result = await api.startAssembly({ sessionId, orderNo })
         setGameState(result.gameState)
+        if (result.assemblyResult) {
+          setLastAssemblyResult({ orderNo, ...result.assemblyResult })
+        }
       } catch (err) {
         setError(String(err))
       } finally {
@@ -186,6 +195,7 @@ export function useGameState() {
     setWeeklyReport(null)
     setMonthlyReport(null)
     setImpactAnalysis(null)
+    setLastAssemblyResult(null)
   }, [])
 
   return {
@@ -198,6 +208,7 @@ export function useGameState() {
     weeklyReport,
     monthlyReport,
     impactAnalysis,
+    lastAssemblyResult,
     startGame,
     performAction,
     advanceDay,
