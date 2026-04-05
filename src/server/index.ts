@@ -25,6 +25,16 @@ const sessions = new SessionStore(GOOGLE_API_KEY)
 // APIルート
 app.use('/api', createRouter(sessions, GOOGLE_API_KEY))
 
+// ルートアクセス時の案内（開発時の誤アクセスを防ぐ）
+app.get('/', (_req, res) => {
+  res.status(200).json({
+    message: 'Backend API server is running.',
+    frontend: 'http://localhost:5173/',
+    health: '/health',
+    apiBase: '/api',
+  })
+})
+
 // ヘルスチェック
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
