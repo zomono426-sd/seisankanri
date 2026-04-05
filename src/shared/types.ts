@@ -216,6 +216,21 @@ export interface InventoryItem {
   nextDeliveryDay?: number
   weeklyPlanQuantity?: number
   monthlyPlanQuantity?: number
+  deliveryQuantity?: number          // 1回あたりの標準納入数量
+}
+
+// --- 発注書（Purchase Order） ---
+export interface PurchaseOrder {
+  id: string                   // PO番号（例: 'PO-001'）
+  partNo: string               // 原材料品番
+  supplierId: SupplierId       // サプライヤー
+  quantity: number             // 発注数量
+  orderWeek: number            // 発注週
+  orderDay: number             // 発注日
+  deliveryWeek: number         // 納入予定週
+  deliveryDay: number          // 納入予定日
+  status: 'ordered' | 'in_transit' | 'delivered' | 'delayed'
+  isEmergency: boolean         // 緊急発注か
 }
 
 // --- BOM（部品構成表） ---
@@ -240,6 +255,7 @@ export interface InventorySnapshot {
   dailyProduced: number                     // 中間品の日次生産数
   dailyAssembled: number                    // 受注組立で消費された数
   events: string[]
+  rawMaterialStock?: Record<string, number>  // 原材料品番 → 在庫数
 }
 
 export interface MrpState {
@@ -252,6 +268,7 @@ export interface MrpState {
   inventoryHistory: InventorySnapshot[]  // 日次スナップショット
   totalDailyProduced: number   // 本日生産量
   totalAllocatedToday: number  // 本日組立量
+  purchaseOrders: PurchaseOrder[]  // 発注書リスト
 }
 
 // --- イベントストリームアイテム ---

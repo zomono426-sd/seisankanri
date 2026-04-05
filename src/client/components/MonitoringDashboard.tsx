@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import type { GameState, ProductionOrder, LineProductionPlan, InventoryItem } from '../../shared/types'
+import type { GameState, ProductionOrder, LineProductionPlan, InventoryItem, PurchaseOrder } from '../../shared/types'
 import { InventoryTransition } from './InventoryTransition'
 
 interface Props {
@@ -78,6 +78,59 @@ function IntermediateBarChart({ intermediates }: { intermediates: InventoryItem[
                 {item.free}/{item.onHand}
               </span>
               <span className="text-[10px] text-factory-muted flex-shrink-0">(安全:{item.safetyStock})</span>
+              {isLow && <span className="text-xs flex-shrink-0">⚠</span>}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+const DAY_NAMES_SHORT = ['月', '火', '水', '木', '金']
+
+// --- 原材料在庫バーチャート ---
+function RawMaterialBarChart({ rawMaterials, purchaseOrders }: { rawMaterials: InventoryItem[]; purchaseOrders: PurchaseOrder[] }) {
+  const maxScale = Math.max(...rawMaterials.map(i => Math.max(i.safetyStock * 2, i.onHand, 1)))
+
+  // 各品番の次回納入PO（最も早い active PO）を取得
+  function getNextPO(partNo: string): PurchaseOrder | undefined {
+    return purchaseOrders
+      .filter(po => po.partNo === partNo && (po.status === 'ordered' || po.status === 'in_transit'))
+      .sort((a, b) => (a.deliveryWeek * 5 + a.deliveryDay) - (b.deliveryWeek * 5 + b.deliveryDay))[0]
+  }
+
+  return (
+    <div className="space-y-2">
+      {rawMaterials.map(item => {
+        const isLow = item.free <= item.safetyStock
+        const barPct = Math.min((item.free / maxScale) * 100, 100)
+        const safetyPct = Math.min((item.safetyStock / maxScale) * 100, 100)
+        const nextPO = getNextPO(item.partNo)
+
+        return (
+          <div key={item.partNo}>
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="text-xs text-factory-text truncate w-28" title={item.partName}>{item.partName}</span>
+              <div className="flex-1 relative h-4 bg-factory-border/30 rounded overflow-visible">
+                <div
+                  className={`h-full rounded transition-all ${isLow ? 'bg-red-500/60' : 'bg-teal-500/60'}`}
+                  style={{ width: `${barPct}%` }}
+                />
+                {/* 安全在庫ライン */}
+                <div
+                  className="absolute top-0 bottom-0 w-px border-l border-dashed border-red-400/70"
+                  style={{ left: `${safetyPct}%` }}
+                />
+              </div>
+              <span className={`text-xs font-mono flex-shrink-0 ${isLow ? 'text-red-400' : 'text-factory-text'}`}>
+                {item.free}/{item.onHand}
+              </span>
+              <span className="text-[10px] text-factory-muted flex-shrink-0">
+                {nextPO
+                  ? `W${nextPO.deliveryWeek}${DAY_NAMES_SHORT[nextPO.deliveryDay - 1]} +${nextPO.quantity} 🚚`
+                  : '-'}
+              </span>
               {isLow && <span className="text-xs flex-shrink-0">⚠</span>}
             </div>
           </div>
@@ -284,30 +337,8 @@ export function MonitoringDashboard({ gameState, onStartAssembly, onUpdateProduc
 
         {/* 原材料在庫 */}
         <div className="bg-factory-panel border border-factory-border rounded-lg p-2.5 flex-shrink-0">
-          <h3 className="text-xs text-factory-amber uppercase tracking-wider mb-1.5 font-bold">原材料在庫</h3>
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-factory-muted">
-                <th className="text-left py-0.5">品名</th>
-                <th className="text-right py-0.5">在庫</th>
-                <th className="text-right py-0.5">空き</th>
-                <th className="text-right py-0.5">安全</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rawMaterials.map(item => {
-                const isLow = item.free <= item.safetyStock
-                return (
-                  <tr key={item.partNo} className={isLow ? 'text-red-400' : 'text-factory-text'}>
-                    <td className="py-0.5 truncate max-w-[120px]" title={item.partName}>{item.partName}</td>
-                    <td className="text-right py-0.5 font-mono">{item.onHand}</td>
-                    <td className="text-right py-0.5 font-mono">{item.free}</td>
-                    <td className="text-right py-0.5 font-mono text-factory-muted">{item.safetyStock}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+          <h3 className="text-xs text-factory-amber uppercase tracking-wider mb-2 font-bold">原材料在庫</h3>
+          <RawMaterialBarChart rawMaterials={rawMaterials} purchaseOrders={mrpState.purchaseOrders ?? []} />
         </div>
 
         {/* 製造ライン・生産計画 */}

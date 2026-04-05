@@ -136,10 +136,10 @@ const INITIAL_MRP: MrpState = {
   ],
   inventory: [
     // --- 原料 (rawMaterial) ---
-    { partNo: 'SV-3000', partName: 'ACサーボモーター SV-3000', itemType: 'rawMaterial', onHand: 4, allocated: 0, free: 4, safetyStock: 2, reorderPoint: 4, leadTimeDays: 5, supplierId: 'daito_denki', nextDeliveryWeek: 1, nextDeliveryDay: 4 },
-    { partNo: 'CB-RAL7035', partName: '制御盤パネル RAL7035', itemType: 'rawMaterial', onHand: 5, allocated: 0, free: 5, safetyStock: 2, reorderPoint: 5, leadTimeDays: 3, supplierId: 'maruyama_kinzoku', nextDeliveryWeek: 1, nextDeliveryDay: 3 },
-    { partNo: 'BELT-200', partName: '搬送ベルト 200mm', itemType: 'rawMaterial', onHand: 20, allocated: 0, free: 20, safetyStock: 5, reorderPoint: 10, leadTimeDays: 4, supplierId: 'tokai_logistics', nextDeliveryWeek: 2, nextDeliveryDay: 1 },
-    { partNo: 'PCB-MAIN', partName: 'メイン制御基板', itemType: 'rawMaterial', onHand: 6, allocated: 0, free: 6, safetyStock: 2, reorderPoint: 5, leadTimeDays: 5, supplierId: 'mikawa_seimitsu', nextDeliveryWeek: 1, nextDeliveryDay: 5 },
+    { partNo: 'SV-3000', partName: 'ACサーボモーター SV-3000', itemType: 'rawMaterial', onHand: 12, allocated: 0, free: 12, safetyStock: 4, reorderPoint: 8, leadTimeDays: 3, deliveryQuantity: 20, supplierId: 'daito_denki', nextDeliveryWeek: 1, nextDeliveryDay: 3 },
+    { partNo: 'CB-RAL7035', partName: '制御盤パネル RAL7035', itemType: 'rawMaterial', onHand: 10, allocated: 0, free: 10, safetyStock: 3, reorderPoint: 5, leadTimeDays: 2, deliveryQuantity: 10, supplierId: 'maruyama_kinzoku', nextDeliveryWeek: 2, nextDeliveryDay: 1 },
+    { partNo: 'BELT-200', partName: '搬送ベルト 200mm', itemType: 'rawMaterial', onHand: 30, allocated: 0, free: 30, safetyStock: 8, reorderPoint: 12, leadTimeDays: 2, deliveryQuantity: 20, supplierId: 'tokai_logistics', nextDeliveryWeek: 2, nextDeliveryDay: 3 },
+    { partNo: 'PCB-MAIN', partName: 'メイン制御基板', itemType: 'rawMaterial', onHand: 10, allocated: 0, free: 10, safetyStock: 3, reorderPoint: 6, leadTimeDays: 3, deliveryQuantity: 15, supplierId: 'mikawa_seimitsu', nextDeliveryWeek: 1, nextDeliveryDay: 4 },
     // --- 中間品 (intermediate) ---
     { partNo: 'WF-FRAME-A', partName: '溶接フレーム Type-A', itemType: 'intermediate', onHand: 12, allocated: 0, free: 12, safetyStock: 3, reorderPoint: 8, leadTimeDays: 2, weeklyPlanQuantity: 10, monthlyPlanQuantity: 40 },
     { partNo: 'SUB-DRIVE', partName: 'サーボ駆動サブアセンブリ', itemType: 'intermediate', onHand: 5, allocated: 0, free: 5, safetyStock: 3, reorderPoint: 6, leadTimeDays: 1, weeklyPlanQuantity: 8, monthlyPlanQuantity: 32 },
@@ -183,6 +183,12 @@ const INITIAL_MRP: MrpState = {
   inventoryHistory: [],
   totalDailyProduced: 0,
   totalAllocatedToday: 0,
+  purchaseOrders: [
+    { id: 'PO-001', partNo: 'SV-3000',    supplierId: 'daito_denki',      quantity: 20, orderWeek: 0, orderDay: 0, deliveryWeek: 1, deliveryDay: 3, status: 'in_transit', isEmergency: false },
+    { id: 'PO-002', partNo: 'PCB-MAIN',   supplierId: 'mikawa_seimitsu',  quantity: 15, orderWeek: 0, orderDay: 0, deliveryWeek: 1, deliveryDay: 4, status: 'in_transit', isEmergency: false },
+    { id: 'PO-003', partNo: 'CB-RAL7035', supplierId: 'maruyama_kinzoku', quantity: 10, orderWeek: 0, orderDay: 0, deliveryWeek: 2, deliveryDay: 1, status: 'in_transit', isEmergency: false },
+    { id: 'PO-004', partNo: 'BELT-200',   supplierId: 'tokai_logistics',  quantity: 20, orderWeek: 0, orderDay: 0, deliveryWeek: 2, deliveryDay: 3, status: 'in_transit', isEmergency: false },
+  ],
 }
 
 // --- 初期部門状態 ---
