@@ -2,7 +2,7 @@ import type { GameGraphState } from '../state.js'
 import { scheduleWeeklyEvents, getEventsForDay } from '../../game/events.js'
 import { generateDirective } from '../../game/director.js'
 import { evaluateWeekly } from '../../game/scoring.js'
-import { dailyCapacityUpdate, produceLineStock } from '../../game/capacity.js'
+import { dailyCapacityUpdate, produceIntermediates, checkPartsAvailability, startAssembly } from '../../game/capacity.js'
 import { randomUUID } from 'crypto'
 import type { EventStreamItem, GameState, InventorySnapshot, ProductionOrder } from '../../../shared/types.js'
 
@@ -21,19 +21,39 @@ export async function timeAdvanceNode(
   const { lines: updatedLines, capacity: updatedCapacity } =
     dailyCapacityUpdate(state.productionLines, state.workCapacity)
 
-  // MRP進捗: ラインの日産能力をラインストックに蓄積（受注への引当はユーザー操作）
-  const { updatedStock, dailyProduced } = produceLineStock(updatedLines, state.mrpState.lineStock)
+  // (a) 中間品の見込み生産（BOM展開で原材料を消費）
+  const { updatedInventory: postProductionInventory, dailyProduced, productionLog } = produceIntermediates(
+    updatedLines,
+    state.mrpState.productionPlans,
+    state.mrpState.inventory,
+    state.mrpState.bom
+  )
+
+  // 生産ログをイベントストリームに追加
+  const productionStreamItems: EventStreamItem[] = []
+  for (const logEntry of productionLog) {
+    const isShortage = logEntry.includes('欠品') || logEntry.includes('停止')
+    productionStreamItems.push({
+      id: randomUUID(),
+      timestamp: { week: currentWeek, day: currentDay },
+      characterId: 'system',
+      title: '中間品生産',
+      content: logEntry,
+      severity: isShortage ? 'medium' : 'low',
+      category: 'manufacturing',
+      isRead: true,
+    })
+  }
 
   // 受注ステータス更新（製造リードタイム消化 + 納期チェック）
   const absoluteNow = (currentWeek - 1) * 5 + currentDay
-  const updatedOrders = state.mrpState.productionOrders.map(o => {
+  let updatedOrders = state.mrpState.productionOrders.map(o => {
     if (o.status === 'completed') return o
 
     // 生産中（producing）: リードタイム完了チェック
     if (o.status === 'producing' && o.productionEndWeek != null && o.productionEndDay != null) {
       const absoluteEnd = (o.productionEndWeek - 1) * 5 + o.productionEndDay
       if (absoluteNow >= absoluteEnd) {
-        // リードタイム経過 → 完成品として completedQuantity に反映
         const completed = o.allocatedQuantity ?? o.quantity
         return {
           ...o,
@@ -41,7 +61,6 @@ export async function timeAdvanceNode(
           status: (completed >= o.quantity ? 'completed' : 'in_progress') as ProductionOrder['status'],
         }
       }
-      // リードタイム未経過 → producing のまま（ただし納期超過チェック）
       const absoluteDue = (o.dueWeek - 1) * 5 + o.dueDay
       if (absoluteNow > absoluteDue) {
         return { ...o, status: 'delayed' as const }
@@ -57,14 +76,53 @@ export async function timeAdvanceNode(
     return o
   })
 
-  // 日次スナップショット: 生産量・引当量・在庫レベル・イベント影響を記録
+  // (b) waiting_parts 受注の自動チェック: 中間品が揃った受注は自動的に組立開始
+  let currentInventory = postProductionInventory
+  let dailyAssembled = 0
+  const assemblyStreamItems: EventStreamItem[] = []
+
+  for (const order of updatedOrders) {
+    if (order.status !== 'waiting_parts') continue
+
+    const { allAvailable } = checkPartsAvailability(order, currentInventory, state.mrpState.bom)
+    if (!allAvailable) continue
+
+    const result = startAssembly(order, currentInventory, state.mrpState.bom, currentWeek, currentDay)
+    if (result.success) {
+      updatedOrders = updatedOrders.map(o =>
+        o.orderNo === order.orderNo ? result.updatedOrder : o
+      )
+      currentInventory = result.updatedInventory
+      dailyAssembled += order.quantity
+
+      assemblyStreamItems.push({
+        id: randomUUID(),
+        timestamp: { week: currentWeek, day: currentDay },
+        characterId: 'system',
+        title: '自動組立開始',
+        content: `受注 ${order.orderNo} の部品が揃い、組立を開始しました（${order.partName} x${order.quantity}）`,
+        severity: 'low',
+        category: 'manufacturing',
+        isRead: false,
+      })
+    }
+  }
+
+  // (d) 日次スナップショット
+  const intermediateStock: Record<string, number> = {}
+  for (const item of currentInventory) {
+    if (item.itemType === 'intermediate') {
+      intermediateStock[item.partNo] = item.onHand
+    }
+  }
+
   const snapshot: InventorySnapshot = {
     week: currentWeek,
     day: currentDay,
-    lineStock: { ...updatedStock },
-    totalStock: Object.values(updatedStock).reduce((s, v) => s + v, 0),
+    intermediateStock,
+    totalIntermediateStock: Object.values(intermediateStock).reduce((s, v) => s + v, 0),
     dailyProduced,
-    dailyAllocated: state.mrpState.totalAllocatedToday,
+    dailyAssembled: state.mrpState.totalAllocatedToday + dailyAssembled,
     events: state.eventStream
       .filter(e => e.timestamp.week === currentWeek && e.timestamp.day === currentDay
         && (e.category === 'manufacturing' || e.category === 'capacity'))
@@ -73,13 +131,16 @@ export async function timeAdvanceNode(
 
   const newMrp = {
     ...state.mrpState,
-    lineStock: updatedStock,
+    inventory: currentInventory,
     productionOrders: updatedOrders,
     weeklyCompleted: updatedOrders.reduce((sum, o) => sum + o.completedQuantity, 0),
     inventoryHistory: [...(state.mrpState.inventoryHistory ?? []), snapshot],
     totalDailyProduced: dailyProduced,
     totalAllocatedToday: 0,
   }
+
+  // 生産ログ・組立ログをイベントストリームに結合
+  const allNewStreamItems = [...productionStreamItems, ...assemblyStreamItems]
 
   if (currentDay < 5) {
     // --- 次の日へ ---
@@ -118,7 +179,7 @@ export async function timeAdvanceNode(
       currentDay: nextDay,
       dayTimeRemaining: 2,
       pendingEvents: nextDayEvents,
-      eventStream: [...state.eventStream, ...newStreamItems],
+      eventStream: [...state.eventStream, ...allNewStreamItems, ...newStreamItems],
       productionLines: updatedLines,
       workCapacity: updatedCapacity,
       mrpState: newMrp,
@@ -189,7 +250,7 @@ export async function timeAdvanceNode(
     allWeekEvents: newWeekEvents,
     pendingEvents: day1Events,
     resolvedEventIds: [],
-    eventStream: [...state.eventStream, ...weekStartStream],
+    eventStream: [...state.eventStream, ...allNewStreamItems, ...weekStartStream],
     productionLines: updatedLines,
     workCapacity: updatedCapacity,
     mrpState: newMrp,

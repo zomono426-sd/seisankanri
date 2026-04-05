@@ -9,6 +9,7 @@ import type {
   SupplierId,
   WeeklyReport,
   MonthlyReport,
+  LineProductionPlan,
 } from '../../shared/types'
 
 const BASE = '/api'
@@ -68,8 +69,21 @@ export const api = {
       body: JSON.stringify(params),
     }),
 
-  allocateOrder: (params: { sessionId: string; orderNo: string; quantity: number }) =>
-    request<{ gameState: GameState }>('/game/allocate-order', {
+  startAssembly: (params: { sessionId: string; orderNo: string }) =>
+    request<{
+      gameState: GameState
+      assemblyResult?: {
+        started: boolean
+        missingParts?: Array<{ partNo: string; partName: string; required: number; available: number }>
+        message: string
+      }
+    }>('/game/start-assembly', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
+  updateProductionPlan: (params: { sessionId: string; plans: LineProductionPlan[] }) =>
+    request<{ gameState: GameState }>('/game/update-production-plan', {
       method: 'POST',
       body: JSON.stringify(params),
     }),

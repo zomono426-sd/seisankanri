@@ -125,7 +125,8 @@ export const GameStateAnnotation = Annotation.Root({
     default: () => ({
       productionOrders: [],
       inventory: [],
-      lineStock: {},
+      bom: [],
+      productionPlans: [],
       weeklyPlanned: 0,
       weeklyCompleted: 0,
       inventoryHistory: [],

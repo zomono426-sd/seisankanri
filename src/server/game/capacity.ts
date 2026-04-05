@@ -1,4 +1,4 @@
-import type { WorkCapacity, ProductionLine, ProductionOrder } from '../../shared/types.js'
+import type { WorkCapacity, ProductionLine, ProductionOrder, LineProductionPlan, InventoryItem, BomEntry } from '../../shared/types.js'
 
 // ============================================================
 // 作業能力システム — 設備故障・人員欠勤の影響管理
@@ -129,85 +129,185 @@ export function reduceLineCapacity(
   )
 }
 
-// --- 生産: ラインの日産能力をラインストックに蓄積 ---
-export function produceLineStock(
-  lines: ProductionLine[],
-  currentStock: Record<string, number>
-): { updatedStock: Record<string, number>; dailyProduced: number } {
-  const stock = { ...currentStock }
-  let totalProduced = 0
-  for (const line of lines) {
-    let effective = 0
-    if (line.status === 'running') {
-      effective = Math.floor(line.capacity * (line.assignedWorkers / line.maxWorkers))
-    } else if (line.status === 'reduced') {
-      effective = Math.floor(line.capacity * 0.5)
-    }
-    // down / maintenance → 0
-    if (effective > 0) {
-      stock[line.name] = (stock[line.name] ?? 0) + effective
-      totalProduced += effective
-    }
+// --- ライン実効能力の計算 ---
+function getLineEffectiveCapacity(line: ProductionLine): number {
+  if (line.status === 'running') {
+    return Math.floor(line.capacity * (line.assignedWorkers / line.maxWorkers))
+  } else if (line.status === 'reduced') {
+    return Math.floor(line.capacity * 0.5)
   }
-  return { updatedStock: stock, dailyProduced: totalProduced }
+  return 0 // down / maintenance
 }
 
-// --- 手動引当: ユーザーがラインストックを受注に割り当て（ATO: 受注組立生産） ---
-// 引当は即完了ではなく、全数引当完了時点から製造リードタイムが開始する。
-// リードタイム経過後に timeAdvanceNode で completedQuantity が反映される。
-export function allocateToOrder(
-  orders: ProductionOrder[],
-  lineStock: Record<string, number>,
-  orderNo: string,
-  quantity: number,
-  currentWeek: number,
-  currentDay: number
-): { updatedOrders: ProductionOrder[]; updatedStock: Record<string, number>; allocatedQuantity: number } {
-  const order = orders.find(o => o.orderNo === orderNo)
-  if (!order) throw new Error('Order not found')
+// --- 中間品の見込み生産（MTS部分） ---
+// 各ラインの productionPlans に従い、BOM展開して原材料を消費しつつ中間品を生産する。
+export function produceIntermediates(
+  lines: ProductionLine[],
+  plans: LineProductionPlan[],
+  inventory: InventoryItem[],
+  bom: BomEntry[]
+): {
+  updatedInventory: InventoryItem[]
+  dailyProduced: number
+  productionLog: string[]
+} {
+  const inv = inventory.map(item => ({ ...item }))
+  let totalProduced = 0
+  const log: string[] = []
 
-  const available = lineStock[order.line] ?? 0
-  const remaining = order.quantity - (order.allocatedQuantity ?? 0)
-  const actual = Math.min(quantity, available, remaining)
-  if (actual <= 0) throw new Error('No stock available or order already fully allocated')
+  for (const plan of plans) {
+    const line = lines.find(l => l.id === plan.lineId)
+    if (!line) continue
 
-  const updatedOrders = orders.map(o => {
-    if (o.orderNo !== orderNo) return o
-    const newAllocated = (o.allocatedQuantity ?? 0) + actual
-    const fullyAllocated = newAllocated >= o.quantity
+    const effective = getLineEffectiveCapacity(line)
+    if (effective <= 0) {
+      log.push(`${line.name}: ライン停止中のため ${plan.targetPartNo} の生産なし`)
+      continue
+    }
 
-    if (fullyAllocated) {
-      // 全数引当完了 → 生産開始、リードタイムのカウント開始
-      const leadTime = o.productionLeadTimeDays ?? 2
-      const absoluteStart = (currentWeek - 1) * 5 + currentDay
-      const absoluteEnd = absoluteStart + leadTime
-      const endWeek = Math.floor((absoluteEnd - 1) / 5) + 1
-      const endDay = ((absoluteEnd - 1) % 5) + 1
+    const maxProduce = Math.min(effective, plan.dailyTarget)
 
-      return {
-        ...o,
-        allocatedQuantity: newAllocated,
-        status: 'producing' as const,
-        productionStartWeek: currentWeek,
-        productionStartDay: currentDay,
-        productionEndWeek: endWeek,
-        productionEndDay: endDay,
+    // BOM展開: この中間品を作るのに必要な原材料を取得
+    const childEntries = bom.filter(b => b.parentPartNo === plan.targetPartNo)
+
+    let canProduce = maxProduce
+
+    if (childEntries.length > 0) {
+      // 原材料制約チェック: 足りる分だけ生産
+      for (const entry of childEntries) {
+        const material = inv.find(i => i.partNo === entry.childPartNo)
+        if (!material) {
+          canProduce = 0
+          break
+        }
+        const availableForProduction = Math.floor(material.free / entry.quantityPer)
+        canProduce = Math.min(canProduce, availableForProduction)
       }
     }
+    // childEntries.length === 0 の場合（WF-FRAME-Aなど）は原材料チェックをスキップ
 
-    // 部分引当: まだ全数揃っていない
-    return {
-      ...o,
-      allocatedQuantity: newAllocated,
-      status: 'in_progress' as const,
+    if (canProduce <= 0) {
+      log.push(`${line.name}: 原材料欠品により ${plan.targetPartNo} の生産停止`)
+      continue
     }
-  })
 
-  const updatedStockMap = {
-    ...lineStock,
-    [order.line]: available - actual,
+    // 原材料を消費
+    for (const entry of childEntries) {
+      const material = inv.find(i => i.partNo === entry.childPartNo)!
+      const consumed = entry.quantityPer * canProduce
+      material.onHand -= consumed
+      material.free -= consumed
+    }
+
+    // 中間品を生産
+    const intermediate = inv.find(i => i.partNo === plan.targetPartNo)
+    if (intermediate) {
+      intermediate.onHand += canProduce
+      intermediate.free += canProduce
+    }
+
+    totalProduced += canProduce
+
+    const consumptionDetail = childEntries
+      .map(e => `${e.childPartNo} x${e.quantityPer * canProduce}消費`)
+      .join('、')
+    const detail = consumptionDetail ? `（${consumptionDetail}）` : '（原材料不要）'
+    log.push(`${line.name}: ${plan.targetPartNo} x${canProduce}台生産${detail}`)
   }
-  return { updatedOrders, updatedStock: updatedStockMap, allocatedQuantity: actual }
+
+  return { updatedInventory: inv, dailyProduced: totalProduced, productionLog: log }
+}
+
+// --- BOM展開による部品充足チェック ---
+export function checkPartsAvailability(
+  order: ProductionOrder,
+  inventory: InventoryItem[],
+  bom: BomEntry[]
+): {
+  allAvailable: boolean
+  missingParts: Array<{ partNo: string; partName: string; required: number; available: number }>
+} {
+  const bomEntries = bom.filter(b => b.parentPartNo === order.partNo)
+  const missingParts: Array<{ partNo: string; partName: string; required: number; available: number }> = []
+  let allAvailable = true
+
+  for (const entry of bomEntries) {
+    const required = entry.quantityPer * order.quantity
+    const item = inventory.find(i => i.partNo === entry.childPartNo)
+    const available = item?.free ?? 0
+
+    if (available < required) {
+      allAvailable = false
+      missingParts.push({
+        partNo: entry.childPartNo,
+        partName: item?.partName ?? entry.childPartNo,
+        required,
+        available,
+      })
+    }
+  }
+
+  return { allAvailable, missingParts }
+}
+
+// --- 受注組立開始（ATO部分） ---
+// BOM展開して中間品/原材料が揃っていれば消費して組立開始。足りなければ waiting_parts。
+export function startAssembly(
+  order: ProductionOrder,
+  inventory: InventoryItem[],
+  bom: BomEntry[],
+  currentWeek: number,
+  currentDay: number
+): {
+  updatedOrder: ProductionOrder
+  updatedInventory: InventoryItem[]
+  success: boolean
+  missingParts: Array<{ partNo: string; partName: string; required: number; available: number }>
+} {
+  const { allAvailable, missingParts } = checkPartsAvailability(order, inventory, bom)
+
+  if (!allAvailable) {
+    return {
+      updatedOrder: { ...order, status: 'waiting_parts' },
+      updatedInventory: inventory,
+      success: false,
+      missingParts,
+    }
+  }
+
+  // 全部品揃い → 在庫を消費して組立開始
+  const inv = inventory.map(item => ({ ...item }))
+  const bomEntries = bom.filter(b => b.parentPartNo === order.partNo)
+
+  for (const entry of bomEntries) {
+    const item = inv.find(i => i.partNo === entry.childPartNo)!
+    const consumed = entry.quantityPer * order.quantity
+    item.onHand -= consumed
+    item.free -= consumed
+    item.allocated += consumed
+  }
+
+  // リードタイム計算
+  const leadTime = order.productionLeadTimeDays ?? 2
+  const absoluteStart = (currentWeek - 1) * 5 + currentDay
+  const absoluteEnd = absoluteStart + leadTime
+  const endWeek = Math.floor((absoluteEnd - 1) / 5) + 1
+  const endDay = ((absoluteEnd - 1) % 5) + 1
+
+  return {
+    updatedOrder: {
+      ...order,
+      allocatedQuantity: order.quantity,
+      status: 'producing',
+      productionStartWeek: currentWeek,
+      productionStartDay: currentDay,
+      productionEndWeek: endWeek,
+      productionEndDay: endDay,
+    },
+    updatedInventory: inv,
+    success: true,
+    missingParts: [],
+  }
 }
 
 // 日次のリセット（翌日になったら欠勤リセット等は行わない — 継続影響）

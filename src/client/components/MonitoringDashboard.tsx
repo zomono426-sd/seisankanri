@@ -1,9 +1,10 @@
-import type { GameState, ProductionOrder, InventoryItem } from '../../shared/types'
+import type { GameState, ProductionOrder, LineProductionPlan } from '../../shared/types'
 import { InventoryTransition } from './InventoryTransition'
 
 interface Props {
   gameState: GameState
-  onAllocateOrder: (orderNo: string, quantity: number) => void
+  onStartAssembly: (orderNo: string) => void
+  onUpdateProductionPlan: (plans: LineProductionPlan[]) => void
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -13,6 +14,7 @@ function StatusBadge({ status }: { status: string }) {
     maintenance: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
     reduced: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
     planned: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
+    waiting_parts: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
     in_progress: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
     producing: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
     completed: 'bg-green-500/20 text-green-400 border-green-500/30',
@@ -21,8 +23,8 @@ function StatusBadge({ status }: { status: string }) {
   }
   const labels: Record<string, string> = {
     running: '稼働中', down: '停止', maintenance: 'メンテ中', reduced: '能力低下',
-    planned: '計画', in_progress: '引当中', producing: '生産中', completed: '完了', delayed: '遅延', blocked: 'ブロック',
-    normal: '通常', high: '高', urgent: '緊急',
+    planned: '計画', waiting_parts: '部品待ち', in_progress: '引当中',
+    producing: '組立中', completed: '完了', delayed: '遅延', blocked: 'ブロック',
   }
   return (
     <span className={`text-xs px-1.5 py-0.5 rounded border ${colors[status] ?? 'bg-gray-500/20 text-gray-400'}`}>
@@ -31,245 +33,17 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
-function PriorityBadge({ priority }: { priority: string }) {
-  if (priority === 'urgent') {
-    return (
-      <span className="text-xs px-1.5 py-0.5 rounded border bg-red-500/30 text-red-300 border-red-500/50 animate-pulse font-bold">
-        緊急
-      </span>
-    )
-  }
-  if (priority === 'high') {
-    return (
-      <span className="text-xs px-1.5 py-0.5 rounded border bg-orange-500/20 text-orange-400 border-orange-500/30 font-bold">
-        高
-      </span>
-    )
-  }
-  return null
-}
-
 const DAY_NAMES = ['月', '火', '水', '木', '金']
 
 function toAbsoluteDay(week: number, day: number): number {
   return (week - 1) * 5 + day
 }
 
-function DeadlineIndicator({ order, currentWeek, currentDay }: {
-  order: ProductionOrder
-  currentWeek: number
-  currentDay: number
-}) {
-  const absoluteNow = toAbsoluteDay(currentWeek, currentDay)
-  const absoluteDue = toAbsoluteDay(order.dueWeek, order.dueDay)
-  const remaining = absoluteDue - absoluteNow
-  const isCompleted = order.status === 'completed'
-
-  if (isCompleted) {
-    return <span className="text-xs text-green-400">完了</span>
-  }
-
-  if (remaining < 0 || order.status === 'delayed') {
-    return (
-      <span className="text-xs text-red-400 font-bold animate-pulse">
-        遅延 {Math.abs(remaining)}日超過
-      </span>
-    )
-  }
-  if (remaining === 0) {
-    return (
-      <span className="text-xs text-orange-400 font-bold">
-        本日納期
-      </span>
-    )
-  }
-  return (
-    <span className={`text-xs ${remaining <= 2 ? 'text-yellow-400' : 'text-factory-muted'}`}>
-      残り{remaining}日
-    </span>
-  )
-}
-
-function InventoryLink({ inventory }: { inventory: InventoryItem | undefined }) {
-  if (!inventory) return null
-  const isLow = inventory.free <= inventory.safetyStock
-  return (
-    <div className={`text-xs flex items-center gap-1 ${isLow ? 'text-red-400' : 'text-factory-muted'}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${isLow ? 'bg-red-500' : 'bg-green-500'}`} />
-      <span className="truncate">{inventory.partName}</span>
-      <span className="ml-auto whitespace-nowrap">
-        空:{inventory.free}
-      </span>
-    </div>
-  )
-}
-
-function OrderCard({
-  order,
-  currentWeek,
-  currentDay,
-  linkedInventory,
-  lineStatus,
-  availableStock,
-  onAllocate,
-}: {
-  order: ProductionOrder
-  currentWeek: number
-  currentDay: number
-  linkedInventory: InventoryItem | undefined
-  lineStatus: string
-  availableStock: number
-  onAllocate: (orderNo: string, quantity: number) => void
-}) {
-  const absoluteNow = toAbsoluteDay(currentWeek, currentDay)
-  const absoluteDue = toAbsoluteDay(order.dueWeek, order.dueDay)
-  const remaining = absoluteDue - absoluteNow
-  const isUrgent = order.priority === 'urgent'
-  const isOverdue = remaining < 0 || order.status === 'delayed'
-  const progressPct = order.quantity > 0 ? (order.completedQuantity / order.quantity) * 100 : 0
-  const isCompleted = order.status === 'completed'
-  const isProducing = order.status === 'producing'
-
-  // 引当可能数: 未引当分 = quantity - allocatedQuantity
-  const allocated = order.allocatedQuantity ?? 0
-  const unallocated = order.quantity - allocated
-  const allocatable = Math.min(availableStock, unallocated)
-  const canAllocate = !isCompleted && !isProducing && allocatable > 0
-
-  // 生産中の場合: リードタイム進捗を計算
-  let leadTimeRemainingDays = 0
-  let leadTimeProgressPct = 0
-  if (isProducing && order.productionStartWeek && order.productionStartDay && order.productionEndWeek && order.productionEndDay) {
-    const absoluteStart = toAbsoluteDay(order.productionStartWeek, order.productionStartDay)
-    const absoluteEnd = toAbsoluteDay(order.productionEndWeek, order.productionEndDay)
-    const totalLeadTime = absoluteEnd - absoluteStart
-    const elapsed = absoluteNow - absoluteStart
-    leadTimeRemainingDays = Math.max(0, absoluteEnd - absoluteNow)
-    leadTimeProgressPct = totalLeadTime > 0 ? Math.min(100, (elapsed / totalLeadTime) * 100) : 100
-  }
-
-  const borderClass = isUrgent
-    ? 'border-red-500/60 shadow-[0_0_8px_rgba(239,68,68,0.2)]'
-    : isOverdue
-    ? 'border-red-500/40'
-    : 'border-factory-border/50'
-
-  const bgClass = isUrgent
-    ? 'bg-red-500/5'
-    : isOverdue
-    ? 'bg-red-500/5'
-    : 'bg-factory-panel'
-
-  return (
-    <div className={`border rounded-lg p-2.5 ${borderClass} ${bgClass} ${isUrgent ? 'animate-pulse-slow' : ''}`}>
-      {/* Header: orderNo + badges */}
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-xs font-mono font-bold text-factory-text">{order.orderNo}</span>
-        <div className="flex items-center gap-1">
-          <PriorityBadge priority={order.priority} />
-          <StatusBadge status={order.status} />
-        </div>
-      </div>
-
-      {/* Customer + Part */}
-      <div className="text-xs text-factory-subtext mb-1 truncate">
-        {order.customerName} — {order.partName}
-      </div>
-
-      {/* Deadline */}
-      <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs text-factory-muted">
-            納期: W{order.dueWeek} {DAY_NAMES[order.dueDay - 1]}曜
-          </span>
-          <DeadlineIndicator order={order} currentWeek={currentWeek} currentDay={currentDay} />
-        </div>
-      </div>
-
-      {/* Progress bar: 引当 + 完成 */}
-      <div className="mt-1.5 mb-1.5">
-        <div className="flex justify-between text-xs mb-0.5">
-          <span className="text-factory-muted">
-            {isProducing ? '生産中' : isCompleted ? '完成' : `引当 ${allocated}/${order.quantity}台`}
-          </span>
-          <span className="text-factory-text font-mono">{order.completedQuantity}/{order.quantity}台</span>
-        </div>
-        <div className="h-2 bg-factory-border rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${
-              progressPct >= 100 ? 'bg-green-500' :
-              isOverdue ? 'bg-red-500' :
-              'bg-factory-amber'
-            }`}
-            style={{ width: `${Math.min(progressPct, 100)}%` }}
-          />
-        </div>
-      </div>
-
-      {/* 生産リードタイム進捗バー（producing時のみ） */}
-      {isProducing && (
-        <div className="mb-1.5">
-          <div className="flex justify-between text-xs mb-0.5">
-            <span className="text-purple-400">製造リードタイム</span>
-            <span className="text-purple-300 font-mono">残{leadTimeRemainingDays}日</span>
-          </div>
-          <div className="h-2 bg-factory-border rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all bg-purple-500"
-              style={{ width: `${leadTimeProgressPct}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Line assignment */}
-      <div className="flex items-center gap-1.5 text-xs text-factory-muted mt-1.5">
-        <span className={`w-1.5 h-1.5 rounded-full ${
-          lineStatus === 'running' ? 'bg-green-500' :
-          lineStatus === 'down' ? 'bg-red-500' :
-          lineStatus === 'maintenance' ? 'bg-yellow-500' :
-          'bg-orange-500'
-        }`} />
-        <span>{order.line}</span>
-      </div>
-
-      {/* Inventory link */}
-      {linkedInventory && (
-        <div className="mt-1 pt-1 border-t border-factory-border/30">
-          <InventoryLink inventory={linkedInventory} />
-        </div>
-      )}
-
-      {/* Allocation button */}
-      {!isCompleted && (
-        <div className="mt-1.5 pt-1.5 border-t border-factory-border/30">
-          {isProducing ? (
-            <div className="w-full text-xs py-1 px-2 rounded font-bold text-center bg-purple-500/20 text-purple-400 border border-purple-500/30">
-              製造指図発行済み（残{leadTimeRemainingDays}日）
-            </div>
-          ) : (
-            <button
-              onClick={() => onAllocate(order.orderNo, allocatable)}
-              disabled={!canAllocate}
-              className={`w-full text-xs py-1 px-2 rounded font-bold transition-all ${
-                canAllocate
-                  ? 'bg-factory-amber/20 text-factory-amber border border-factory-amber/40 hover:bg-factory-amber/30 cursor-pointer'
-                  : 'bg-factory-border/30 text-factory-muted border border-factory-border/30 cursor-not-allowed'
-              }`}
-            >
-              {canAllocate
-                ? `引当 (${allocatable}台)`
-                : unallocated <= 0 ? '全数引当済み' : '在庫なし'}
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-export function MonitoringDashboard({ gameState, onAllocateOrder }: Props) {
+export function MonitoringDashboard({ gameState, onStartAssembly, onUpdateProductionPlan }: Props) {
   const { productionLines, mrpState, departments, workCapacity, currentDay, currentWeek, suppliers } = gameState
+
+  const intermediates = mrpState.inventory.filter(i => i.itemType === 'intermediate')
+  const rawMaterials = mrpState.inventory.filter(i => i.itemType === 'rawMaterial')
 
   // Sort orders: urgent first, then by absolute due date
   const priorityOrder: Record<string, number> = { urgent: 0, high: 1, normal: 2 }
@@ -279,118 +53,55 @@ export function MonitoringDashboard({ gameState, onAllocateOrder }: Props) {
       toAbsoluteDay(a.dueWeek, a.dueDay) - toAbsoluteDay(b.dueWeek, b.dueDay)
   )
 
-  // Weekly progress
-  const weeklyPct = mrpState.weeklyPlanned > 0
-    ? (mrpState.weeklyCompleted / mrpState.weeklyPlanned) * 100
-    : 0
-  // Expected progress based on elapsed days out of 20
-  const elapsedDays = toAbsoluteDay(currentWeek, currentDay)
-  const expectedPct = (elapsedDays / 20) * 100
-  const isBehind = weeklyPct < expectedPct - 10
-
-  // Build line status lookup
-  const lineStatusMap: Record<string, string> = {}
-  for (const line of productionLines) {
-    lineStatusMap[line.name] = line.status
-  }
-
-  // Build inventory lookup by partNo
-  const inventoryMap: Record<string, InventoryItem> = {}
-  for (const item of mrpState.inventory) {
-    inventoryMap[item.partNo] = item
-  }
-
-  // Count orders per line
-  const ordersPerLine: Record<string, number> = {}
-  for (const order of mrpState.productionOrders) {
-    ordersPerLine[order.line] = (ordersPerLine[order.line] ?? 0) + 1
-  }
-
-  // Count critical inventory items
-  const criticalInventory = mrpState.inventory.filter(i => i.free <= i.safetyStock)
-
-  // Line stock
-  const lineStock = mrpState.lineStock ?? {}
-
-  // 累計生産量（在庫履歴から集計）
-  const totalProduced = (mrpState.inventoryHistory ?? []).reduce((sum, s) => sum + s.dailyProduced, 0)
-
-  // 現在の合計在庫
-  const currentTotalStock = Object.values(lineStock).reduce((sum, v) => sum + v, 0)
+  const totalIntermediateStock = intermediates.reduce((s, i) => s + i.onHand, 0)
 
   return (
     <div className="flex flex-col gap-2 h-full overflow-y-auto">
 
-      {/* === Row 1: 生産・在庫サマリー + 在庫推移 === */}
+      {/* ATOフロー概要 */}
       <div className="bg-factory-panel border border-factory-border rounded-lg p-3 flex-shrink-0">
-        {/* KPIカード */}
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-xs text-factory-amber uppercase tracking-wider font-bold">
-            生産・在庫サマリー
+            ATO生産フロー
           </h3>
-          {/* Week timeline */}
-          <div className="flex gap-1">
-            {[1, 2, 3, 4].map(week => {
-              const isCurrent = week === currentWeek
-              const isPast = week < currentWeek
-              return (
-                <div key={week} className="text-center px-1">
-                  <div className={`text-[10px] font-mono ${
-                    isCurrent ? 'text-factory-amber font-bold' :
-                    isPast ? 'text-factory-muted' :
-                    'text-factory-muted/50'
-                  }`}>
-                    W{week}
-                  </div>
-                  <div className={`h-1 rounded-full mt-0.5 w-6 ${
-                    isCurrent ? 'bg-factory-amber' :
-                    isPast ? 'bg-factory-muted/50' :
-                    'bg-factory-border/50'
-                  }`} />
-                </div>
-              )
-            })}
+          <div className="text-xs text-factory-muted">
+            W{currentWeek} {DAY_NAMES[currentDay - 1]}曜
           </div>
         </div>
+        <div className="flex items-center justify-center gap-1 text-[10px] text-factory-muted mb-3">
+          <span className="text-cyan-400">原材料</span>
+          <span>→</span>
+          <span className="text-green-400">中間品生産(見込)</span>
+          <span>→</span>
+          <span className="text-blue-400">中間品在庫</span>
+          <span>→</span>
+          <span className="text-purple-400">受注組立(ATO)</span>
+          <span>→</span>
+          <span className="text-factory-amber">完成・出荷</span>
+        </div>
 
+        {/* KPIカード */}
         <div className="grid grid-cols-4 gap-2 mb-3">
-          {/* 計画台数 */}
           <div className="bg-factory-bg/50 rounded p-2 text-center">
-            <div className="text-[10px] text-factory-muted mb-0.5">計画</div>
+            <div className="text-[10px] text-factory-muted mb-0.5">受注計画</div>
             <div className="text-lg font-mono font-bold text-factory-text">{mrpState.weeklyPlanned}</div>
             <div className="text-[10px] text-factory-muted">台</div>
           </div>
-          {/* 累計生産 */}
           <div className="bg-factory-bg/50 rounded p-2 text-center">
-            <div className="text-[10px] text-green-400 mb-0.5">累計生産</div>
-            <div className="text-lg font-mono font-bold text-green-400">{totalProduced}</div>
+            <div className="text-[10px] text-green-400 mb-0.5">完成済み</div>
+            <div className="text-lg font-mono font-bold text-green-400">{mrpState.weeklyCompleted}</div>
             <div className="text-[10px] text-factory-muted">台</div>
           </div>
-          {/* 累計引当 */}
           <div className="bg-factory-bg/50 rounded p-2 text-center">
-            <div className="text-[10px] text-factory-amber mb-0.5">累計引当</div>
-            <div className="text-lg font-mono font-bold text-factory-amber">{mrpState.weeklyCompleted}</div>
+            <div className="text-[10px] text-blue-400 mb-0.5">中間品在庫</div>
+            <div className="text-lg font-mono font-bold text-blue-400">{totalIntermediateStock}</div>
+            <div className="text-[10px] text-factory-muted">合計</div>
+          </div>
+          <div className="bg-factory-bg/50 rounded p-2 text-center">
+            <div className="text-[10px] text-factory-amber mb-0.5">本日生産</div>
+            <div className="text-lg font-mono font-bold text-factory-amber">{mrpState.totalDailyProduced}</div>
             <div className="text-[10px] text-factory-muted">台</div>
           </div>
-          {/* 現在在庫 */}
-          <div className="bg-factory-bg/50 rounded p-2 text-center">
-            <div className="text-[10px] text-blue-400 mb-0.5">現在在庫</div>
-            <div className="text-lg font-mono font-bold text-blue-400">{currentTotalStock}</div>
-            <div className="text-[10px] text-factory-muted">台</div>
-          </div>
-        </div>
-
-        {/* フロー表示: 生産 → 在庫 → 引当 → 受注消化 */}
-        <div className="flex items-center justify-center gap-1 text-[10px] text-factory-muted mb-3">
-          <span className="text-green-400">日次生産</span>
-          <span>→</span>
-          <span className="text-blue-400">在庫蓄積</span>
-          <span>→</span>
-          <span className="text-factory-amber">引当</span>
-          <span>→</span>
-          <span className="text-purple-400">製造指図</span>
-          <span>→</span>
-          <span className="text-factory-text">完成</span>
         </div>
 
         {/* 在庫推移チャート */}
@@ -399,82 +110,89 @@ export function MonitoringDashboard({ gameState, onAllocateOrder }: Props) {
           currentWeek={currentWeek}
           currentDay={currentDay}
         />
-
-        {isBehind && (
-          <div className="text-xs text-red-400 mt-1 font-bold">
-            計画に対して遅延しています
-          </div>
-        )}
       </div>
 
-      {/* === Row 2: 受注ボード (Hero area) === */}
-      <div className="bg-factory-panel border border-factory-border rounded-lg p-3 flex-1 min-h-0">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-xs text-factory-amber uppercase tracking-wider font-bold">
-            受注ボード
-          </h3>
-          <div className="flex items-center gap-2 text-xs text-factory-muted">
-            <span>{mrpState.productionOrders.length}件</span>
-            {criticalInventory.length > 0 && (
-              <span className="text-red-400">在庫警告: {criticalInventory.length}品目</span>
-            )}
-          </div>
-        </div>
-        <div className="grid grid-cols-2 xl:grid-cols-3 gap-2 overflow-y-auto max-h-[calc(100%-2rem)]">
-          {sortedOrders.map(order => (
-            <OrderCard
-              key={order.orderNo}
-              order={order}
-              currentWeek={currentWeek}
-              currentDay={currentDay}
-              linkedInventory={inventoryMap[order.partNo]}
-              lineStatus={lineStatusMap[order.line] ?? 'running'}
-              availableStock={lineStock[order.line] ?? 0}
-              onAllocate={onAllocateOrder}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* === Row 3: 製造ライン + 部門・サプライヤー === */}
-      <div className="grid grid-cols-2 gap-2 flex-shrink-0">
-        {/* 製造ライン稼働状況 */}
+      {/* 中間品在庫 + 原材料在庫 + 生産計画 */}
+      <div className="grid grid-cols-3 gap-2 flex-shrink-0">
+        {/* 中間品在庫 */}
         <div className="bg-factory-panel border border-factory-border rounded-lg p-2.5">
-          <h3 className="text-xs text-factory-amber uppercase tracking-wider mb-1.5 font-bold">
-            製造ライン稼働状況
-          </h3>
+          <h3 className="text-xs text-factory-amber uppercase tracking-wider mb-1.5 font-bold">中間品在庫</h3>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-factory-muted">
+                <th className="text-left py-0.5">品番</th>
+                <th className="text-right py-0.5">在庫</th>
+                <th className="text-right py-0.5">空き</th>
+                <th className="text-right py-0.5">安全</th>
+              </tr>
+            </thead>
+            <tbody>
+              {intermediates.map(item => {
+                const isLow = item.free <= item.safetyStock
+                return (
+                  <tr key={item.partNo} className={isLow ? 'text-red-400' : 'text-factory-text'}>
+                    <td className="py-0.5 truncate max-w-[100px]" title={item.partName}>{item.partName}</td>
+                    <td className="text-right py-0.5 font-mono">{item.onHand}</td>
+                    <td className="text-right py-0.5 font-mono">{item.free}</td>
+                    <td className="text-right py-0.5 font-mono text-factory-muted">{item.safetyStock}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* 原材料在庫 */}
+        <div className="bg-factory-panel border border-factory-border rounded-lg p-2.5">
+          <h3 className="text-xs text-factory-amber uppercase tracking-wider mb-1.5 font-bold">原材料在庫</h3>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-factory-muted">
+                <th className="text-left py-0.5">品番</th>
+                <th className="text-right py-0.5">在庫</th>
+                <th className="text-right py-0.5">空き</th>
+                <th className="text-right py-0.5">安全</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rawMaterials.map(item => {
+                const isLow = item.free <= item.safetyStock
+                return (
+                  <tr key={item.partNo} className={isLow ? 'text-red-400' : 'text-factory-text'}>
+                    <td className="py-0.5 truncate max-w-[100px]" title={item.partName}>{item.partName}</td>
+                    <td className="text-right py-0.5 font-mono">{item.onHand}</td>
+                    <td className="text-right py-0.5 font-mono">{item.free}</td>
+                    <td className="text-right py-0.5 font-mono text-factory-muted">{item.safetyStock}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* 生産計画 + ライン */}
+        <div className="bg-factory-panel border border-factory-border rounded-lg p-2.5">
+          <h3 className="text-xs text-factory-amber uppercase tracking-wider mb-1.5 font-bold">生産計画・ライン</h3>
           <div className="space-y-1.5">
-            {productionLines.map(line => (
-              <div key={line.id} className="flex items-center gap-2">
-                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                  line.status === 'running' ? 'bg-green-500' :
-                  line.status === 'down' ? 'bg-red-500' :
-                  line.status === 'maintenance' ? 'bg-yellow-500' :
-                  'bg-orange-500'
-                }`} />
-                <span className="text-xs text-factory-text flex-shrink-0">{line.name}</span>
-                <span className="text-[10px] text-factory-muted flex-shrink-0">
-                  [{ordersPerLine[line.name] ?? 0}件]
-                </span>
-                <div className="flex-1 h-1.5 bg-factory-border rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full ${
-                      line.status === 'down' ? 'bg-red-500' :
-                      line.currentLoad / line.capacity > 0.8 ? 'bg-yellow-500' : 'bg-green-500'
-                    }`}
-                    style={{ width: `${line.status === 'down' ? 0 : (line.currentLoad / line.capacity) * 100}%` }}
-                  />
+            {productionLines.map(line => {
+              const plan = mrpState.productionPlans.find(p => p.lineId === line.id)
+              return (
+                <div key={line.id} className="flex items-center gap-1.5 text-xs">
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                    line.status === 'running' ? 'bg-green-500' :
+                    line.status === 'down' ? 'bg-red-500' :
+                    line.status === 'maintenance' ? 'bg-yellow-500' :
+                    'bg-orange-500'
+                  }`} />
+                  <span className="text-factory-text flex-shrink-0 w-24 truncate">{line.name}</span>
+                  <span className="text-factory-muted flex-shrink-0">→</span>
+                  <span className="text-blue-400 flex-1 truncate">
+                    {plan ? `${plan.targetPartNo} (${plan.dailyTarget}台/日)` : '未割当'}
+                  </span>
+                  <StatusBadge status={line.status} />
                 </div>
-                <span className="text-[10px] text-factory-muted flex-shrink-0">
-                  {line.currentLoad}/{line.capacity}
-                </span>
-                <span className={`text-[10px] font-bold flex-shrink-0 ${
-                  (lineStock[line.name] ?? 0) > 0 ? 'text-factory-amber' : 'text-factory-muted'
-                }`}>
-                  在庫:{lineStock[line.name] ?? 0}
-                </span>
-              </div>
-            ))}
+              )
+            })}
           </div>
           {/* 総合能力 */}
           <div className="mt-2 pt-1.5 border-t border-factory-border flex items-center gap-2">
@@ -496,26 +214,42 @@ export function MonitoringDashboard({ gameState, onAllocateOrder }: Props) {
             </span>
           </div>
         </div>
+      </div>
 
-        {/* 部門・サプライヤー */}
-        <div className="bg-factory-panel border border-factory-border rounded-lg p-2.5">
-          <h3 className="text-xs text-factory-amber uppercase tracking-wider mb-1.5 font-bold">
-            部門状態
+      {/* 受注ボード */}
+      <div className="bg-factory-panel border border-factory-border rounded-lg p-3 flex-1 min-h-0">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-xs text-factory-amber uppercase tracking-wider font-bold">
+            受注ボード（ATO組立）
           </h3>
+          <span className="text-xs text-factory-muted">{mrpState.productionOrders.length}件</span>
+        </div>
+        <div className="grid grid-cols-2 xl:grid-cols-3 gap-2 overflow-y-auto max-h-[calc(100%-2rem)]">
+          {sortedOrders.map(order => (
+            <OrderCardATO
+              key={order.orderNo}
+              order={order}
+              currentWeek={currentWeek}
+              currentDay={currentDay}
+              onStartAssembly={onStartAssembly}
+              bom={mrpState.bom}
+              inventory={mrpState.inventory}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* 部門・サプライヤー */}
+      <div className="grid grid-cols-2 gap-2 flex-shrink-0">
+        <div className="bg-factory-panel border border-factory-border rounded-lg p-2.5">
+          <h3 className="text-xs text-factory-amber uppercase tracking-wider mb-1.5 font-bold">部門状態</h3>
           <div className="space-y-1">
             {(['sales', 'procurement', 'manufacturing'] as const).map(dept => {
               const d = departments[dept]
               if (!d) return null
-              const deptColors: Record<string, string> = {
-                sales: '#0891b2',
-                procurement: '#15803d',
-                manufacturing: '#b45309',
-              }
               return (
                 <div key={dept} className="flex items-center gap-2">
-                  <span className="text-xs font-medium w-8 flex-shrink-0" style={{ color: deptColors[dept] }}>
-                    {d.label}
-                  </span>
+                  <span className="text-xs font-medium w-8 flex-shrink-0 text-factory-text">{d.label}</span>
                   <div className="flex-1 h-1.5 bg-factory-border rounded-full overflow-hidden">
                     <div
                       className="h-full rounded-full"
@@ -526,34 +260,171 @@ export function MonitoringDashboard({ gameState, onAllocateOrder }: Props) {
                     />
                   </div>
                   <span className="text-[10px] text-factory-muted w-8 text-right">{d.load}%</span>
-                  {d.activeIssues > 0 && (
-                    <span className="text-[10px] text-red-400">{d.activeIssues}件</span>
-                  )}
                 </div>
               )
             })}
           </div>
+        </div>
 
-          {/* サプライヤー */}
-          <div className="mt-2 pt-1.5 border-t border-factory-border">
-            <h4 className="text-[10px] text-factory-amber uppercase tracking-wider mb-1 font-bold">サプライヤー</h4>
-            <div className="flex flex-wrap gap-1">
-              {suppliers.map(s => (
-                <div
-                  key={s.id}
-                  className="text-[10px] px-1 py-0.5 rounded border border-factory-border/50"
-                  title={`${s.name} - 好感度:${s.affinity}`}
-                >
-                  <span style={{ color: s.avatarColor }}>{s.name.slice(0, 4)}</span>
-                  <span className="ml-0.5 text-factory-muted">
-                    {s.affinity >= 70 ? '♥' : s.affinity >= 40 ? '♡' : '💔'}
-                  </span>
-                </div>
-              ))}
-            </div>
+        <div className="bg-factory-panel border border-factory-border rounded-lg p-2.5">
+          <h3 className="text-xs text-factory-amber uppercase tracking-wider mb-1.5 font-bold">サプライヤー</h3>
+          <div className="flex flex-wrap gap-1">
+            {suppliers.map(s => (
+              <div
+                key={s.id}
+                className="text-[10px] px-1 py-0.5 rounded border border-factory-border/50"
+                title={`${s.name} - 好感度:${s.affinity}`}
+              >
+                <span style={{ color: s.avatarColor }}>{s.name.slice(0, 4)}</span>
+                <span className="ml-0.5 text-factory-muted">
+                  {s.affinity >= 70 ? '♥' : s.affinity >= 40 ? '♡' : '💔'}
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+// --- 受注カード（ATO版） ---
+function OrderCardATO({
+  order,
+  currentWeek,
+  currentDay,
+  onStartAssembly,
+  bom,
+  inventory,
+}: {
+  order: ProductionOrder
+  currentWeek: number
+  currentDay: number
+  onStartAssembly: (orderNo: string) => void
+  bom: GameState['mrpState']['bom']
+  inventory: GameState['mrpState']['inventory']
+}) {
+  const absoluteNow = toAbsoluteDay(currentWeek, currentDay)
+  const absoluteDue = toAbsoluteDay(order.dueWeek, order.dueDay)
+  const remaining = absoluteDue - absoluteNow
+  const isCompleted = order.status === 'completed'
+  const isProducing = order.status === 'producing'
+  const isWaitingParts = order.status === 'waiting_parts'
+  const isOverdue = remaining < 0 || order.status === 'delayed'
+  const canStart = order.status === 'planned' || order.status === 'waiting_parts'
+
+  // BOM展開: 必要な部品
+  const bomEntries = bom.filter(b => b.parentPartNo === order.partNo)
+  const partsStatus = bomEntries.map(entry => {
+    const item = inventory.find(i => i.partNo === entry.childPartNo)
+    const required = entry.quantityPer * order.quantity
+    const available = item?.free ?? 0
+    return { partNo: entry.childPartNo, partName: item?.partName ?? entry.childPartNo, required, available, enough: available >= required }
+  })
+  const allPartsAvailable = partsStatus.every(p => p.enough)
+
+  // リードタイム進捗
+  let leadTimeRemainingDays = 0
+  if (isProducing && order.productionEndWeek && order.productionEndDay) {
+    const absoluteEnd = toAbsoluteDay(order.productionEndWeek, order.productionEndDay)
+    leadTimeRemainingDays = Math.max(0, absoluteEnd - absoluteNow)
+  }
+
+  const borderClass = order.priority === 'urgent'
+    ? 'border-red-500/60 shadow-[0_0_8px_rgba(239,68,68,0.2)]'
+    : isOverdue
+    ? 'border-red-500/40'
+    : 'border-factory-border/50'
+
+  return (
+    <div className={`border rounded-lg p-2.5 bg-factory-panel ${borderClass}`}>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs font-mono font-bold text-factory-text">{order.orderNo}</span>
+        <div className="flex items-center gap-1">
+          {order.priority !== 'normal' && (
+            <span className={`text-xs px-1 py-0.5 rounded border font-bold ${
+              order.priority === 'urgent'
+                ? 'bg-red-500/30 text-red-300 border-red-500/50 animate-pulse'
+                : 'bg-orange-500/20 text-orange-400 border-orange-500/30'
+            }`}>
+              {order.priority === 'urgent' ? '緊急' : '高'}
+            </span>
+          )}
+          <StatusBadge status={order.status} />
+        </div>
+      </div>
+
+      {/* Product + Customer */}
+      <div className="text-xs text-factory-subtext mb-1 truncate">
+        {order.customerName} — {order.partName}
+      </div>
+
+      {/* Deadline */}
+      <div className="flex items-center justify-between mb-1 text-xs">
+        <span className="text-factory-muted">
+          納期: W{order.dueWeek} {DAY_NAMES[order.dueDay - 1]}曜
+        </span>
+        {isCompleted ? (
+          <span className="text-green-400">完了</span>
+        ) : isOverdue ? (
+          <span className="text-red-400 font-bold animate-pulse">遅延 {Math.abs(remaining)}日超過</span>
+        ) : remaining === 0 ? (
+          <span className="text-orange-400 font-bold">本日納期</span>
+        ) : (
+          <span className={remaining <= 2 ? 'text-yellow-400' : 'text-factory-muted'}>残り{remaining}日</span>
+        )}
+      </div>
+
+      {/* 数量 */}
+      <div className="text-xs text-factory-muted mb-1">
+        数量: <span className="text-factory-text font-mono">{order.completedQuantity}/{order.quantity}台</span>
+      </div>
+
+      {/* BOM部品状況（計画/部品待ち時のみ表示） */}
+      {canStart && bomEntries.length > 0 && (
+        <div className="mt-1 pt-1 border-t border-factory-border/30">
+          <div className="text-[10px] text-factory-muted mb-0.5">必要部品:</div>
+          {partsStatus.map(p => (
+            <div key={p.partNo} className={`text-[10px] flex justify-between ${p.enough ? 'text-green-400' : 'text-red-400'}`}>
+              <span className="truncate">{p.partName}</span>
+              <span className="font-mono ml-1">{p.available}/{p.required}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 組立中: リードタイム表示 */}
+      {isProducing && (
+        <div className="mt-1 pt-1 border-t border-factory-border/30">
+          <div className="text-xs text-purple-400">
+            組立中 — 残り{leadTimeRemainingDays}日
+          </div>
+        </div>
+      )}
+
+      {/* 部品待ち表示 */}
+      {isWaitingParts && (
+        <div className="mt-1 text-[10px] text-yellow-400">
+          部品が揃い次第、自動で組立開始します
+        </div>
+      )}
+
+      {/* ボタン */}
+      {canStart && (
+        <div className="mt-1.5 pt-1.5 border-t border-factory-border/30">
+          <button
+            onClick={() => onStartAssembly(order.orderNo)}
+            className={`w-full text-xs py-1 px-2 rounded font-bold transition-all ${
+              allPartsAvailable
+                ? 'bg-purple-500/20 text-purple-400 border border-purple-500/40 hover:bg-purple-500/30 cursor-pointer'
+                : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/40 hover:bg-yellow-500/30 cursor-pointer'
+            }`}
+          >
+            {allPartsAvailable ? '組立開始' : '組立開始（部品不足 → 部品待ち）'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
