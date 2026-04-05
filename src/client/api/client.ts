@@ -68,6 +68,12 @@ export const api = {
       body: JSON.stringify(params),
     }),
 
+  allocateOrder: (params: { sessionId: string; orderNo: string; quantity: number }) =>
+    request<{ gameState: GameState }>('/game/allocate-order', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
   getWeekResult: (sessionId: string) =>
     request<{ report: WeeklyReport; gameState: GameState }>(`/game/week-result/${sessionId}`),
 

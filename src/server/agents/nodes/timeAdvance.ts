@@ -2,7 +2,7 @@ import type { GameGraphState } from '../state.js'
 import { scheduleWeeklyEvents, getEventsForDay } from '../../game/events.js'
 import { generateDirective } from '../../game/director.js'
 import { evaluateWeekly } from '../../game/scoring.js'
-import { dailyCapacityUpdate, allocateLineProduction } from '../../game/capacity.js'
+import { dailyCapacityUpdate, produceLineStock } from '../../game/capacity.js'
 import { randomUUID } from 'crypto'
 import type { EventStreamItem, GameState } from '../../../shared/types.js'
 
@@ -21,14 +21,23 @@ export async function timeAdvanceNode(
   const { lines: updatedLines, capacity: updatedCapacity } =
     dailyCapacityUpdate(state.productionLines, state.workCapacity)
 
-  // MRP進捗: ラインの日産能力を受注に引き当て
-  const { updatedOrders } = allocateLineProduction(
-    updatedLines,
-    state.mrpState.productionOrders,
-    state.currentDay
-  )
+  // MRP進捗: ラインの日産能力をラインストックに蓄積（受注への引当はユーザー操作）
+  const { updatedStock } = produceLineStock(updatedLines, state.mrpState.lineStock)
+
+  // 受注ステータス更新（納期チェック）
+  const absoluteNow = (currentWeek - 1) * 5 + currentDay
+  const updatedOrders = state.mrpState.productionOrders.map(o => {
+    if (o.status === 'completed') return o
+    const absoluteDue = (o.dueWeek - 1) * 5 + o.dueDay
+    if (absoluteNow > absoluteDue && o.completedQuantity < o.quantity) {
+      return { ...o, status: 'delayed' as const }
+    }
+    return o
+  })
+
   const newMrp = {
     ...state.mrpState,
+    lineStock: updatedStock,
     productionOrders: updatedOrders,
     weeklyCompleted: updatedOrders.reduce((sum, o) => sum + o.completedQuantity, 0),
   }

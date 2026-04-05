@@ -179,6 +179,7 @@ export default function App() {
     advanceDay,
     continueToNextWeek,
     investigate,
+    allocateOrder,
     resetGame,
   } = useGameState()
 
@@ -220,6 +221,7 @@ export default function App() {
         onAction={performAction}
         onInvestigate={investigate}
         onAdvanceDay={advanceDay}
+        onAllocateOrder={allocateOrder}
       />
     )
   }
