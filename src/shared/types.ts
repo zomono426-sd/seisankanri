@@ -49,6 +49,7 @@ export type EventCategory =
   | 'procurement'     // 調達系（部品遅延、価格変動、サプライヤー問題）
   | 'manufacturing'   // 製造系（ライン問題、品質不良、工程遅れ）
   | 'capacity'        // 能力系（設備故障、人員欠勤、残業制限）
+  | 'inventory'       // 在庫系（安全在庫割れ、納入遅延、計画見直し）
   | 'director'        // 工場長指令
 
 // --- イベント定義（v2: 週次プール型） ---
@@ -191,14 +192,23 @@ export interface ProductionOrder {
   priority: 'normal' | 'high' | 'urgent'
 }
 
+export type InventoryItemType = 'product' | 'intermediate' | 'rawMaterial'
+
 export interface InventoryItem {
   partNo: string
   partName: string
+  itemType: InventoryItemType
   onHand: number
   allocated: number
   free: number
   safetyStock: number
   reorderPoint: number
+  leadTimeDays: number
+  supplierId?: SupplierId
+  nextDeliveryWeek?: number
+  nextDeliveryDay?: number
+  weeklyPlanQuantity?: number
+  monthlyPlanQuantity?: number
 }
 
 export interface InventorySnapshot {

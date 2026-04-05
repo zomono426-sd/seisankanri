@@ -311,12 +311,150 @@ const DIRECTOR_EVENTS: GameEvent[] = [
   },
 ]
 
+// --- 在庫系イベント（受注組立生産・見込み生産・原料調達） ---
+const INVENTORY_EVENTS: GameEvent[] = [
+  // === 製品系（受注組立リードタイム関連） ===
+  {
+    id: 'INV1_lead_time_overrun',
+    category: 'inventory',
+    characterId: 'workshop',
+    title: '受注品の生産リードタイム超過',
+    description: '製造職長 谷口から連絡。「搬送コンベアの受注組立ですが、予想以上に時間がかかってます。サーボ駆動サブアセンブリの取り付け精度が出なくて、手直しが増えてます。このままだと納期に間に合いません。」',
+    severity: 'high',
+    triggerDay: 2,
+    triggerProbability: 0.6,
+    affectedDepartment: 'manufacturing',
+    choices: [
+      { id: 'overtime_production', label: '残業で対応して納期を守る', actionType: 'self', timeCost: 'half_day', context: 'コスト増加だが納期は維持できる。現場の負担が増える。' },
+      { id: 'transfer_workers', label: '他ラインから応援を入れる', actionType: 'self', timeCost: 'half_day', context: '当該ラインは加速するが、他ラインの能力が落ちる。' },
+      { id: 'negotiate_delivery', label: '西村に納期延長を顧客と相談させる', actionType: 'dispatch', dispatchTarget: 'sales', timeCost: 'none', context: '納期を延ばせれば余裕ができるが、顧客満足度に影響。' },
+    ],
+  },
+  {
+    id: 'INV2_custom_spec',
+    category: 'inventory',
+    characterId: 'sales',
+    title: '受注仕様の特殊対応',
+    description: '営業主任 西村から連絡。「東海電装の田村さんから、サーボ駆動ユニットの制御プログラムをカスタム仕様にしてほしいとの依頼です。標準工程じゃ対応できないので、特殊工程を追加する必要があります。」',
+    severity: 'medium',
+    triggerDay: 3,
+    triggerProbability: 0.5,
+    affectedDepartment: 'manufacturing',
+    choices: [
+      { id: 'add_special_process', label: '特殊工程を追加して対応する', actionType: 'self', timeCost: 'full_day', context: 'コストは大幅増だが顧客の期待に応える。1日かかる。' },
+      { id: 'propose_standard', label: '標準仕様で代替提案するよう西村に指示', actionType: 'dispatch', dispatchTarget: 'sales', timeCost: 'none', context: '顧客の反応次第。満足度に影響する可能性。' },
+      { id: 'delegate_design', label: '田中に工程設計を任せる', actionType: 'dispatch', dispatchTarget: 'subordinate1', timeCost: 'none', context: '田中の経験で対応可能か。結果は能力次第。' },
+    ],
+  },
+  // === 中間品系（見込み生産・計画関連） ===
+  {
+    id: 'INV3_safety_stock_breach',
+    category: 'inventory',
+    characterId: 'procurement',
+    title: '中間品の安全在庫割れ',
+    description: '調達担当 木村から緊急連絡。「サーボ駆動サブアセンブリの在庫が安全在庫を下回りました。現在の在庫数は2台で、安全在庫は3台です。今週の受注組立に支障が出ます。緊急増産か、計画前倒しが必要です。」',
+    severity: 'high',
+    triggerDay: 1,
+    triggerProbability: 0.6,
+    affectedDepartment: 'manufacturing',
+    choices: [
+      { id: 'emergency_production', label: '緊急増産を指示する', actionType: 'self', timeCost: 'half_day', context: '他の生産を止めて中間品を増産。コスト増、現場負担増。' },
+      { id: 'accelerate_plan', label: '週次計画を前倒しする', actionType: 'self', timeCost: 'half_day', context: '計画を変更して早期に補充。他の計画に影響。' },
+      { id: 'defer_safety', label: '当面は在庫なしで受注対応する', actionType: 'defer', timeCost: 'none', context: '先送り。受注組立のリードタイムが伸びるリスク。' },
+    ],
+  },
+  {
+    id: 'INV4_weekly_plan_review',
+    category: 'inventory',
+    characterId: 'dept_manager',
+    title: '週次生産計画の見直し要求',
+    description: '製造部長 橋本から指摘。「中間品の週次計画と実績に乖離が出ている。サーボ駆動サブアセンブリは計画の70%しか生産できていない。制御ユニットは逆に120%で過剰だ。計画を見直せ、松田くん。」',
+    severity: 'medium',
+    triggerDay: 1,
+    triggerProbability: 0.7,
+    affectedDepartment: 'manufacturing',
+    choices: [
+      { id: 'replan_self', label: '自分で計画を再策定する', actionType: 'self', timeCost: 'half_day', context: '全体を見渡して精度の高い計画を立てる。半日かかる。' },
+      { id: 'delegate_replan', label: '佐々木に計画修正を任せる', actionType: 'dispatch', dispatchTarget: 'subordinate2', timeCost: 'none', context: '佐々木の能力に委ねる。精度は能力次第。' },
+      { id: 'keep_plan', label: '現行計画で続行する', actionType: 'self', timeCost: 'none', context: '手間は省けるが在庫過多/不足のリスクが続く。' },
+    ],
+  },
+  {
+    id: 'INV5_excess_inventory',
+    category: 'inventory',
+    characterId: 'dept_manager',
+    title: '中間品の過剰在庫警告',
+    description: '製造部長 橋本から指摘。「溶接フレーム Type-Aの在庫が基準の2倍を超えている。保管スペースも圧迫してるし、保管コストが月10万増だ。見込み生産のペース見直しが必要じゃないか？」',
+    severity: 'medium',
+    triggerDay: 4,
+    triggerProbability: 0.5,
+    affectedDepartment: 'manufacturing',
+    choices: [
+      { id: 'slow_production', label: '中間品の生産ペースを落とす', actionType: 'self', timeCost: 'none', context: 'コスト改善だが、急な受注増に対応できなくなるリスク。' },
+      { id: 'push_sales', label: '営業に販売促進を依頼する', actionType: 'dispatch', dispatchTarget: 'sales', timeCost: 'none', context: '在庫消化を促進。営業の負荷が増える。' },
+      { id: 'defer_excess', label: '来週の計画で調整する', actionType: 'defer', timeCost: 'none', context: '先送り。保管コストが継続して発生。' },
+    ],
+  },
+  // === 原料系（サプライヤー納入関連） ===
+  {
+    id: 'INV6_material_delay',
+    category: 'inventory',
+    characterId: 'procurement',
+    title: '原料の納入日遅延',
+    description: '調達担当 木村から連絡。「大東電機から連絡がありまして、ACサーボモーターの納入が2日遅れる見込みです。設備トラブルで生産が止まったそうです。フリー在庫が2台しかないので、今週後半の受注組立に影響が出ます。」',
+    severity: 'high',
+    triggerDay: 2,
+    triggerProbability: 0.7,
+    affectedDepartment: 'procurement',
+    requiresSupplierNegotiation: true,
+    choices: [
+      { id: 'urgent_delivery', label: 'サプライヤーに緊急納入を依頼する', actionType: 'self', timeCost: 'half_day', context: '大東電機と交渉。追加コストが発生する可能性。' },
+      { id: 'use_alternative', label: '代替部品で暫定対応する', actionType: 'self', timeCost: 'half_day', context: '別のサプライヤーから類似品を調達。品質差のリスク。' },
+      { id: 'wait_resequence', label: '工程順序を変更して待つ', actionType: 'self', timeCost: 'none', context: 'サーボ不要の工程を先に進める。一部生産は停止。' },
+    ],
+  },
+  {
+    id: 'INV7_incoming_rejection',
+    category: 'inventory',
+    characterId: 'procurement',
+    title: '原料の受入検査不合格',
+    description: '調達担当 木村から緊急連絡。「三河精密から納品されたメイン制御基板10枚のうち4枚にはんだ不良が見つかりました。受入検査で弾きましたが、今週必要な分が足りません。三河精密にはもう連絡済みですが、交換品は最短3日後です。」',
+    severity: 'high',
+    triggerDay: 3,
+    triggerProbability: 0.5,
+    affectedDepartment: 'procurement',
+    requiresSupplierNegotiation: true,
+    choices: [
+      { id: 'demand_replacement', label: 'サプライヤーに即時交換を要求する', actionType: 'self', timeCost: 'half_day', context: '三河精密と交渉。好感度に影響するが、品質維持。' },
+      { id: 'sort_and_use', label: '選別して使える分で生産を進める', actionType: 'self', timeCost: 'half_day', context: '6枚で進める。納期は一部遅れるが生産継続。品質リスク。' },
+      { id: 'delegate_analysis', label: '田中に品質データの分析を任せる', actionType: 'dispatch', dispatchTarget: 'subordinate1', timeCost: 'none', context: '不良原因を特定して再発防止。当面の生産は遅れる。' },
+    ],
+  },
+  {
+    id: 'INV8_raw_safety_alert',
+    category: 'inventory',
+    characterId: 'system',
+    title: '原料の安全在庫アラート',
+    description: '【システム通知】搬送ベルト 200mm（BELT-200）の在庫が安全在庫水準に接近しています。現在のフリー在庫: 6本、安全在庫: 5本。次回納入予定は来週です。今週の消費ペースでは安全在庫を割る可能性があります。',
+    severity: 'medium',
+    triggerDay: 3,
+    triggerProbability: 0.6,
+    affectedDepartment: 'procurement',
+    choices: [
+      { id: 'order_urgent', label: '木村に緊急発注を指示する', actionType: 'dispatch', dispatchTarget: 'procurement', timeCost: 'none', context: '追加コストだが安全在庫を維持できる。' },
+      { id: 'increase_next_order', label: '次回発注量を増やして補充する', actionType: 'self', timeCost: 'none', context: '次回納入で補充。それまでは綱渡り。' },
+      { id: 'run_lean', label: '在庫を切り詰めて運用する', actionType: 'self', timeCost: 'none', context: 'コスト最小だが、原料欠品リスクが高まる。' },
+    ],
+  },
+]
+
 // --- 全イベントカタログ ---
 export const ALL_EVENTS = {
   sales: SALES_EVENTS,
   procurement: PROCUREMENT_EVENTS,
   manufacturing: MANUFACTURING_EVENTS,
   capacity: CAPACITY_EVENTS,
+  inventory: INVENTORY_EVENTS,
   director: DIRECTOR_EVENTS,
 }
 
@@ -329,7 +467,7 @@ export function scheduleWeeklyEvents(weekNumber: number): GameEvent[] {
   events.push({ ...DIRECTOR_EVENTS[directorIdx], triggerDay: 1 })
 
   // 各カテゴリからランダムにイベントを選択
-  const categories = ['sales', 'procurement', 'manufacturing', 'capacity'] as const
+  const categories = ['sales', 'procurement', 'manufacturing', 'capacity', 'inventory'] as const
   for (const cat of categories) {
     const pool = ALL_EVENTS[cat]
     // 各カテゴリから2-3件をランダム選択（確率判定付き）

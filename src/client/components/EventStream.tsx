@@ -25,6 +25,7 @@ const categoryIcons: Record<string, string> = {
   procurement: '📦',
   manufacturing: '🔧',
   capacity: '⚙',
+  inventory: '📊',
   director: '🏭',
 }
 

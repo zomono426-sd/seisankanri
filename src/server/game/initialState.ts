@@ -119,11 +119,18 @@ const INITIAL_MRP: MrpState = {
     },
   ],
   inventory: [
-    { partNo: 'SV-3000', partName: 'ACサーボモーター SV-3000', onHand: 4, allocated: 2, free: 2, safetyStock: 2, reorderPoint: 4 },
-    { partNo: 'CB-RAL7035', partName: '制御盤パネル RAL7035', onHand: 5, allocated: 3, free: 2, safetyStock: 2, reorderPoint: 5 },
-    { partNo: 'WF-FRAME-A', partName: '溶接フレーム Type-A', onHand: 12, allocated: 8, free: 4, safetyStock: 3, reorderPoint: 8 },
-    { partNo: 'BELT-200', partName: '搬送ベルト 200mm', onHand: 20, allocated: 9, free: 11, safetyStock: 5, reorderPoint: 10 },
-    { partNo: 'PCB-MAIN', partName: 'メイン制御基板', onHand: 6, allocated: 3, free: 3, safetyStock: 2, reorderPoint: 5 },
+    // --- 原料 (rawMaterial) ---
+    { partNo: 'SV-3000', partName: 'ACサーボモーター SV-3000', itemType: 'rawMaterial', onHand: 4, allocated: 2, free: 2, safetyStock: 2, reorderPoint: 4, leadTimeDays: 5, supplierId: 'daito_denki', nextDeliveryWeek: 1, nextDeliveryDay: 4 },
+    { partNo: 'CB-RAL7035', partName: '制御盤パネル RAL7035', itemType: 'rawMaterial', onHand: 5, allocated: 3, free: 2, safetyStock: 2, reorderPoint: 5, leadTimeDays: 3, supplierId: 'maruyama_kinzoku', nextDeliveryWeek: 1, nextDeliveryDay: 3 },
+    { partNo: 'BELT-200', partName: '搬送ベルト 200mm', itemType: 'rawMaterial', onHand: 20, allocated: 9, free: 11, safetyStock: 5, reorderPoint: 10, leadTimeDays: 4, supplierId: 'tokai_logistics', nextDeliveryWeek: 2, nextDeliveryDay: 1 },
+    { partNo: 'PCB-MAIN', partName: 'メイン制御基板', itemType: 'rawMaterial', onHand: 6, allocated: 3, free: 3, safetyStock: 2, reorderPoint: 5, leadTimeDays: 5, supplierId: 'mikawa_seimitsu', nextDeliveryWeek: 1, nextDeliveryDay: 5 },
+    // --- 中間品 (intermediate) ---
+    { partNo: 'WF-FRAME-A', partName: '溶接フレーム Type-A', itemType: 'intermediate', onHand: 12, allocated: 8, free: 4, safetyStock: 3, reorderPoint: 8, leadTimeDays: 2, weeklyPlanQuantity: 10, monthlyPlanQuantity: 40 },
+    { partNo: 'SUB-DRIVE', partName: 'サーボ駆動サブアセンブリ', itemType: 'intermediate', onHand: 5, allocated: 2, free: 3, safetyStock: 3, reorderPoint: 6, leadTimeDays: 1, weeklyPlanQuantity: 8, monthlyPlanQuantity: 32 },
+    { partNo: 'SUB-CTRL', partName: '制御ユニットサブアセンブリ', itemType: 'intermediate', onHand: 4, allocated: 2, free: 2, safetyStock: 2, reorderPoint: 5, leadTimeDays: 1, weeklyPlanQuantity: 6, monthlyPlanQuantity: 24 },
+    // --- 製品 (product) — 受注組立生産のため安全在庫なし ---
+    { partNo: 'FIN-CONV', partName: '搬送コンベア完成品', itemType: 'product', onHand: 0, allocated: 0, free: 0, safetyStock: 0, reorderPoint: 0, leadTimeDays: 2 },
+    { partNo: 'FIN-FRAME', partName: '溶接フレーム完成品', itemType: 'product', onHand: 0, allocated: 0, free: 0, safetyStock: 0, reorderPoint: 0, leadTimeDays: 1 },
   ],
   lineStock: {
     '第1組立ライン': 0,
