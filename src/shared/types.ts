@@ -201,12 +201,25 @@ export interface InventoryItem {
   reorderPoint: number
 }
 
+export interface InventorySnapshot {
+  week: number
+  day: number
+  lineStock: Record<string, number>
+  totalStock: number
+  dailyProduced: number
+  dailyAllocated: number
+  events: string[]
+}
+
 export interface MrpState {
   productionOrders: ProductionOrder[]
   inventory: InventoryItem[]
   lineStock: Record<string, number>  // ライン名 → 利用可能在庫数
   weeklyPlanned: number        // 全受注の計画台数合計
   weeklyCompleted: number      // 全受注の完了台数合計
+  inventoryHistory: InventorySnapshot[]  // 日次スナップショット
+  totalDailyProduced: number   // 本日生産量
+  totalAllocatedToday: number  // 本日引当量
 }
 
 // --- イベントストリームアイテム ---

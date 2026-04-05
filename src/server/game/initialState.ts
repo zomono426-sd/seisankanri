@@ -132,6 +132,9 @@ const INITIAL_MRP: MrpState = {
   },
   weeklyPlanned: 63,
   weeklyCompleted: 0,
+  inventoryHistory: [],
+  totalDailyProduced: 0,
+  totalAllocatedToday: 0,
 }
 
 // --- 初期部門状態 ---

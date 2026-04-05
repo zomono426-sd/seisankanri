@@ -294,7 +294,7 @@ export function createRouter(sessions: SessionStore, apiKey: string) {
     }
 
     try {
-      const { updatedOrders, updatedStock } = allocateToOrder(
+      const { updatedOrders, updatedStock, allocatedQuantity } = allocateToOrder(
         state.mrpState.productionOrders,
         state.mrpState.lineStock,
         orderNo,
@@ -302,11 +302,24 @@ export function createRouter(sessions: SessionStore, apiKey: string) {
         state.currentWeek,
         state.currentDay
       )
+
+      // 在庫履歴の最新エントリを更新（引当量を加算し、ラインストックを反映）
+      const history = [...(state.mrpState.inventoryHistory ?? [])]
+      if (history.length > 0) {
+        const latest = { ...history[history.length - 1] }
+        latest.dailyAllocated += allocatedQuantity
+        latest.lineStock = { ...updatedStock }
+        latest.totalStock = Object.values(updatedStock).reduce((s, v) => s + v, 0)
+        history[history.length - 1] = latest
+      }
+
       const newMrp = {
         ...state.mrpState,
         productionOrders: updatedOrders,
         lineStock: updatedStock,
         weeklyCompleted: updatedOrders.reduce((sum, o) => sum + o.completedQuantity, 0),
+        inventoryHistory: history,
+        totalAllocatedToday: (state.mrpState.totalAllocatedToday ?? 0) + allocatedQuantity,
       }
       const newState = { ...state, mrpState: newMrp }
       sessions.set(sessionId, newState)
