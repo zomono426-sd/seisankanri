@@ -92,6 +92,47 @@ const SCORE_DELTAS: Record<string, Record<string, Partial<Scores>>> = {
     postpone_maintenance: { deliveryRate: +3, fieldTrust: -3 },
     partial_maintenance: { deliveryRate: -2, fieldTrust: +2 },
   },
+  // 在庫系
+  INV1_lead_time_overrun: {
+    overtime_production: { costControl: -8, deliveryRate: +5 },
+    transfer_workers: { deliveryRate: +3, fieldTrust: -3 },
+    negotiate_delivery: { deliveryRate: -3, customerSatisfaction: -5 },
+  },
+  INV2_custom_spec: {
+    add_special_process: { costControl: -12, customerSatisfaction: +8 },
+    propose_standard: { customerSatisfaction: -5, costControl: +3 },
+    delegate_design: { deliveryRate: -2 },
+  },
+  INV3_safety_stock_breach: {
+    emergency_production: { deliveryRate: +5, costControl: -5, fieldTrust: -3 },
+    accelerate_plan: { deliveryRate: +3, costControl: -3 },
+    defer_safety: { deliveryRate: -10 },
+  },
+  INV4_weekly_plan_review: {
+    replan_self: { deliveryRate: +5, costControl: +3 },
+    delegate_replan: { deliveryRate: +2 },
+    keep_plan: { deliveryRate: -5, costControl: -3 },
+  },
+  INV5_excess_inventory: {
+    slow_production: { costControl: +5, deliveryRate: -3 },
+    push_sales: { costControl: +3, customerSatisfaction: +2 },
+    defer_excess: { costControl: -5 },
+  },
+  INV6_material_delay: {
+    urgent_delivery: { costControl: -5, deliveryRate: +5 },
+    use_alternative: { deliveryRate: +2, customerSatisfaction: -3 },
+    wait_resequence: { deliveryRate: -5, costControl: +2 },
+  },
+  INV7_incoming_rejection: {
+    demand_replacement: { deliveryRate: +3, costControl: -3 },
+    sort_and_use: { deliveryRate: +2, customerSatisfaction: -5 },
+    delegate_analysis: { deliveryRate: -2 },
+  },
+  INV8_raw_safety_alert: {
+    order_urgent: { costControl: -5, deliveryRate: +3 },
+    increase_next_order: { costControl: -2 },
+    run_lean: { deliveryRate: -5, costControl: +3 },
+  },
   // 工場長指令（受領のみ）
   D1_cost_reduction: { acknowledge_cost: {} },
   D2_delivery_push: { acknowledge_delivery: {} },
@@ -148,6 +189,47 @@ const RELATIONSHIP_DELTAS: Record<string, Record<string, Partial<Record<Characte
     reassign_workers: { workshop: +3 },
     reduce_plan: {},
     overtime_others: { workshop: -5 },
+  },
+  // 在庫系
+  INV1_lead_time_overrun: {
+    overtime_production: { workshop: -5 },
+    transfer_workers: { workshop: -3 },
+    negotiate_delivery: { sales: -3 },
+  },
+  INV2_custom_spec: {
+    add_special_process: { sales: +3 },
+    propose_standard: { sales: -3 },
+    delegate_design: { subordinate1: +2 },
+  },
+  INV3_safety_stock_breach: {
+    emergency_production: { workshop: -3 },
+    accelerate_plan: { workshop: +2 },
+    defer_safety: { procurement: -5 },
+  },
+  INV4_weekly_plan_review: {
+    replan_self: { dept_manager: +3 },
+    delegate_replan: { subordinate2: +3 },
+    keep_plan: { dept_manager: -5 },
+  },
+  INV5_excess_inventory: {
+    slow_production: { workshop: +2, dept_manager: +3 },
+    push_sales: { sales: +3 },
+    defer_excess: { dept_manager: -3 },
+  },
+  INV6_material_delay: {
+    urgent_delivery: { procurement: +3 },
+    use_alternative: {},
+    wait_resequence: { workshop: -3 },
+  },
+  INV7_incoming_rejection: {
+    demand_replacement: { procurement: +2 },
+    sort_and_use: {},
+    delegate_analysis: { subordinate1: +2 },
+  },
+  INV8_raw_safety_alert: {
+    order_urgent: { procurement: +3 },
+    increase_next_order: {},
+    run_lean: { procurement: -3 },
   },
 }
 
