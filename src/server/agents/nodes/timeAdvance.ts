@@ -4,7 +4,7 @@ import { generateDirective } from '../../game/director.js'
 import { evaluateWeekly } from '../../game/scoring.js'
 import { dailyCapacityUpdate, produceLineStock } from '../../game/capacity.js'
 import { randomUUID } from 'crypto'
-import type { EventStreamItem, GameState, InventorySnapshot } from '../../../shared/types.js'
+import type { EventStreamItem, GameState, InventorySnapshot, ProductionOrder } from '../../../shared/types.js'
 
 // 日 → 次の日 or 週末 → 次の週 or 月末 に進める
 export async function timeAdvanceNode(
@@ -24,10 +24,32 @@ export async function timeAdvanceNode(
   // MRP進捗: ラインの日産能力をラインストックに蓄積（受注への引当はユーザー操作）
   const { updatedStock, dailyProduced } = produceLineStock(updatedLines, state.mrpState.lineStock)
 
-  // 受注ステータス更新（納期チェック）
+  // 受注ステータス更新（製造リードタイム消化 + 納期チェック）
   const absoluteNow = (currentWeek - 1) * 5 + currentDay
   const updatedOrders = state.mrpState.productionOrders.map(o => {
     if (o.status === 'completed') return o
+
+    // 生産中（producing）: リードタイム完了チェック
+    if (o.status === 'producing' && o.productionEndWeek != null && o.productionEndDay != null) {
+      const absoluteEnd = (o.productionEndWeek - 1) * 5 + o.productionEndDay
+      if (absoluteNow >= absoluteEnd) {
+        // リードタイム経過 → 完成品として completedQuantity に反映
+        const completed = o.allocatedQuantity ?? o.quantity
+        return {
+          ...o,
+          completedQuantity: completed,
+          status: (completed >= o.quantity ? 'completed' : 'in_progress') as ProductionOrder['status'],
+        }
+      }
+      // リードタイム未経過 → producing のまま（ただし納期超過チェック）
+      const absoluteDue = (o.dueWeek - 1) * 5 + o.dueDay
+      if (absoluteNow > absoluteDue) {
+        return { ...o, status: 'delayed' as const }
+      }
+      return o
+    }
+
+    // 通常の納期超過チェック
     const absoluteDue = (o.dueWeek - 1) * 5 + o.dueDay
     if (absoluteNow > absoluteDue && o.completedQuantity < o.quantity) {
       return { ...o, status: 'delayed' as const }

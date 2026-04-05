@@ -14,13 +14,14 @@ function StatusBadge({ status }: { status: string }) {
     reduced: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
     planned: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
     in_progress: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+    producing: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
     completed: 'bg-green-500/20 text-green-400 border-green-500/30',
     delayed: 'bg-red-500/20 text-red-400 border-red-500/30',
     blocked: 'bg-red-500/20 text-red-400 border-red-500/30',
   }
   const labels: Record<string, string> = {
     running: '稼働中', down: '停止', maintenance: 'メンテ中', reduced: '能力低下',
-    planned: '計画', in_progress: '進行中', completed: '完了', delayed: '遅延', blocked: 'ブロック',
+    planned: '計画', in_progress: '引当中', producing: '生産中', completed: '完了', delayed: '遅延', blocked: 'ブロック',
     normal: '通常', high: '高', urgent: '緊急',
   }
   return (
@@ -127,10 +128,25 @@ function OrderCard({
   const isOverdue = remaining < 0 || order.status === 'delayed'
   const progressPct = order.quantity > 0 ? (order.completedQuantity / order.quantity) * 100 : 0
   const isCompleted = order.status === 'completed'
+  const isProducing = order.status === 'producing'
 
-  const orderRemaining = order.quantity - order.completedQuantity
-  const allocatable = Math.min(availableStock, orderRemaining)
-  const canAllocate = !isCompleted && allocatable > 0
+  // 引当可能数: 未引当分 = quantity - allocatedQuantity
+  const allocated = order.allocatedQuantity ?? 0
+  const unallocated = order.quantity - allocated
+  const allocatable = Math.min(availableStock, unallocated)
+  const canAllocate = !isCompleted && !isProducing && allocatable > 0
+
+  // 生産中の場合: リードタイム進捗を計算
+  let leadTimeRemainingDays = 0
+  let leadTimeProgressPct = 0
+  if (isProducing && order.productionStartWeek && order.productionStartDay && order.productionEndWeek && order.productionEndDay) {
+    const absoluteStart = toAbsoluteDay(order.productionStartWeek, order.productionStartDay)
+    const absoluteEnd = toAbsoluteDay(order.productionEndWeek, order.productionEndDay)
+    const totalLeadTime = absoluteEnd - absoluteStart
+    const elapsed = absoluteNow - absoluteStart
+    leadTimeRemainingDays = Math.max(0, absoluteEnd - absoluteNow)
+    leadTimeProgressPct = totalLeadTime > 0 ? Math.min(100, (elapsed / totalLeadTime) * 100) : 100
+  }
 
   const borderClass = isUrgent
     ? 'border-red-500/60 shadow-[0_0_8px_rgba(239,68,68,0.2)]'
@@ -170,10 +186,12 @@ function OrderCard({
         </div>
       </div>
 
-      {/* Progress bar */}
+      {/* Progress bar: 引当 + 完成 */}
       <div className="mt-1.5 mb-1.5">
         <div className="flex justify-between text-xs mb-0.5">
-          <span className="text-factory-muted">進捗</span>
+          <span className="text-factory-muted">
+            {isProducing ? '生産中' : isCompleted ? '完成' : `引当 ${allocated}/${order.quantity}台`}
+          </span>
           <span className="text-factory-text font-mono">{order.completedQuantity}/{order.quantity}台</span>
         </div>
         <div className="h-2 bg-factory-border rounded-full overflow-hidden">
@@ -187,6 +205,22 @@ function OrderCard({
           />
         </div>
       </div>
+
+      {/* 生産リードタイム進捗バー（producing時のみ） */}
+      {isProducing && (
+        <div className="mb-1.5">
+          <div className="flex justify-between text-xs mb-0.5">
+            <span className="text-purple-400">製造リードタイム</span>
+            <span className="text-purple-300 font-mono">残{leadTimeRemainingDays}日</span>
+          </div>
+          <div className="h-2 bg-factory-border rounded-full overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all bg-purple-500"
+              style={{ width: `${leadTimeProgressPct}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Line assignment */}
       <div className="flex items-center gap-1.5 text-xs text-factory-muted mt-1.5">
@@ -209,19 +243,25 @@ function OrderCard({
       {/* Allocation button */}
       {!isCompleted && (
         <div className="mt-1.5 pt-1.5 border-t border-factory-border/30">
-          <button
-            onClick={() => onAllocate(order.orderNo, allocatable)}
-            disabled={!canAllocate}
-            className={`w-full text-xs py-1 px-2 rounded font-bold transition-all ${
-              canAllocate
-                ? 'bg-factory-amber/20 text-factory-amber border border-factory-amber/40 hover:bg-factory-amber/30 cursor-pointer'
-                : 'bg-factory-border/30 text-factory-muted border border-factory-border/30 cursor-not-allowed'
-            }`}
-          >
-            {canAllocate
-              ? `引当 (${allocatable}台)`
-              : '在庫なし'}
-          </button>
+          {isProducing ? (
+            <div className="w-full text-xs py-1 px-2 rounded font-bold text-center bg-purple-500/20 text-purple-400 border border-purple-500/30">
+              製造指図発行済み（残{leadTimeRemainingDays}日）
+            </div>
+          ) : (
+            <button
+              onClick={() => onAllocate(order.orderNo, allocatable)}
+              disabled={!canAllocate}
+              className={`w-full text-xs py-1 px-2 rounded font-bold transition-all ${
+                canAllocate
+                  ? 'bg-factory-amber/20 text-factory-amber border border-factory-amber/40 hover:bg-factory-amber/30 cursor-pointer'
+                  : 'bg-factory-border/30 text-factory-muted border border-factory-border/30 cursor-not-allowed'
+              }`}
+            >
+              {canAllocate
+                ? `引当 (${allocatable}台)`
+                : unallocated <= 0 ? '全数引当済み' : '在庫なし'}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -342,13 +382,15 @@ export function MonitoringDashboard({ gameState, onAllocateOrder }: Props) {
 
         {/* フロー表示: 生産 → 在庫 → 引当 → 受注消化 */}
         <div className="flex items-center justify-center gap-1 text-[10px] text-factory-muted mb-3">
-          <span className="text-green-400">週次生産</span>
+          <span className="text-green-400">日次生産</span>
           <span>→</span>
           <span className="text-blue-400">在庫蓄積</span>
           <span>→</span>
           <span className="text-factory-amber">引当</span>
           <span>→</span>
-          <span className="text-factory-text">受注消化</span>
+          <span className="text-purple-400">製造指図</span>
+          <span>→</span>
+          <span className="text-factory-text">完成</span>
         </div>
 
         {/* 在庫推移チャート */}

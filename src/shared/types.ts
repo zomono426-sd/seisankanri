@@ -187,9 +187,16 @@ export interface ProductionOrder {
   dueWeek: number              // 納期の週（1-4）
   dueDay: number               // 納期の日（1-5、dueWeek内の曜日）
   completedQuantity: number
-  status: 'planned' | 'in_progress' | 'completed' | 'delayed' | 'blocked'
+  status: 'planned' | 'in_progress' | 'producing' | 'completed' | 'delayed' | 'blocked'
   line: string
   priority: 'normal' | 'high' | 'urgent'
+  // --- 製造リードタイム関連（ATO: 受注組立生産） ---
+  productionLeadTimeDays: number       // 製造リードタイム（日数）
+  allocatedQuantity: number            // 引当済み数量（生産中の数）
+  productionStartWeek?: number         // 生産開始週（全数引当完了時）
+  productionStartDay?: number          // 生産開始日（全数引当完了時）
+  productionEndWeek?: number           // 生産完了予定週
+  productionEndDay?: number            // 生産完了予定日
 }
 
 export type InventoryItemType = 'product' | 'intermediate' | 'rawMaterial'

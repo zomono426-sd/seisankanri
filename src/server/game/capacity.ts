@@ -152,7 +152,9 @@ export function produceLineStock(
   return { updatedStock: stock, dailyProduced: totalProduced }
 }
 
-// --- 手動引当: ユーザーがラインストックを受注に割り当て ---
+// --- 手動引当: ユーザーがラインストックを受注に割り当て（ATO: 受注組立生産） ---
+// 引当は即完了ではなく、全数引当完了時点から製造リードタイムが開始する。
+// リードタイム経過後に timeAdvanceNode で completedQuantity が反映される。
 export function allocateToOrder(
   orders: ProductionOrder[],
   lineStock: Record<string, number>,
@@ -165,19 +167,40 @@ export function allocateToOrder(
   if (!order) throw new Error('Order not found')
 
   const available = lineStock[order.line] ?? 0
-  const remaining = order.quantity - order.completedQuantity
+  const remaining = order.quantity - (order.allocatedQuantity ?? 0)
   const actual = Math.min(quantity, available, remaining)
-  if (actual <= 0) throw new Error('No stock available or order already complete')
+  if (actual <= 0) throw new Error('No stock available or order already fully allocated')
 
   const updatedOrders = orders.map(o => {
     if (o.orderNo !== orderNo) return o
-    const newCompleted = o.completedQuantity + actual
-    const absoluteDue = (o.dueWeek - 1) * 5 + o.dueDay
-    const absoluteNow = (currentWeek - 1) * 5 + currentDay
-    let newStatus: ProductionOrder['status'] = 'in_progress'
-    if (newCompleted >= o.quantity) newStatus = 'completed'
-    else if (absoluteNow > absoluteDue) newStatus = 'delayed'
-    return { ...o, completedQuantity: newCompleted, status: newStatus }
+    const newAllocated = (o.allocatedQuantity ?? 0) + actual
+    const fullyAllocated = newAllocated >= o.quantity
+
+    if (fullyAllocated) {
+      // 全数引当完了 → 生産開始、リードタイムのカウント開始
+      const leadTime = o.productionLeadTimeDays ?? 2
+      const absoluteStart = (currentWeek - 1) * 5 + currentDay
+      const absoluteEnd = absoluteStart + leadTime
+      const endWeek = Math.floor((absoluteEnd - 1) / 5) + 1
+      const endDay = ((absoluteEnd - 1) % 5) + 1
+
+      return {
+        ...o,
+        allocatedQuantity: newAllocated,
+        status: 'producing' as const,
+        productionStartWeek: currentWeek,
+        productionStartDay: currentDay,
+        productionEndWeek: endWeek,
+        productionEndDay: endDay,
+      }
+    }
+
+    // 部分引当: まだ全数揃っていない
+    return {
+      ...o,
+      allocatedQuantity: newAllocated,
+      status: 'in_progress' as const,
+    }
   })
 
   const updatedStockMap = {
